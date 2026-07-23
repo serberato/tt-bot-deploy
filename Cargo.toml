@@ -74,7 +74,7 @@ percent-encoding = "2"
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
 parking_lot = "0.12"
-librespot-connect = "0.8.0"
+librespot-connect = { version = "0.8.0", default-features = false, features = ["rustls-tls-native-roots"] }
 
 [profile.release]
 strip = true
