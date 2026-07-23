@@ -1608,6 +1608,7 @@ async fn command_processor(
             }
 
             BotCommand::Replay { user_id: _ } => {
+                use crate::player::MediaPlayer as _;
                 let service = {
                     let mut s = state.lock();
                     s.position_ms = 0;
