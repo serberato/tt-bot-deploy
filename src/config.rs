@@ -312,7 +312,7 @@ impl Default for BotConfig {
             volume_ramp_step: 0.03,
 
             radio_enabled: false,
-            radio_batch_size: 3,
+            radio_batch_size: 10,
             radio_delay: 10.0,
 
             search_limit: 5,

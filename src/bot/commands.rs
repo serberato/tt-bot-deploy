@@ -43,6 +43,9 @@ pub enum BotCommand {
     /// Internal: pre-fetch radio recommendations for the given seed track
     RadioPreFetch { seed_uri: String },
     /// Internal: preload next track for gapless playback
+    Replay {
+        user_id: i32,
+    },
     PreloadNext,
     /// Internal: a YouTube track finished (or errored). `generation` identifies
     /// which load this belongs to so a stale completion (after the user already
@@ -409,7 +412,7 @@ impl CommandDispatcher {
             // Restart the current track from the start. Reuses Seek: a large
             // negative offset clamps to position 0 (works for both services).
             "replay" | "rp" => {
-                self.send(BotCommand::Seek { offset_ms: -86_400_000, user_id: sender_id });
+                self.send(BotCommand::Replay { user_id: sender_id });
                 self.reply_t(client, sender_id, Key::RestartingTrack, &[]);
             }
             // Spotify-only: queue the user's Liked Songs. Silently no-ops on

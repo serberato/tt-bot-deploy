@@ -1161,6 +1161,7 @@ async fn command_processor(
                     let _ = client.enable_voice_transmission(false);
                     audio_reset.store(true, Ordering::Relaxed);
                     player.load_track(&uri);
+                    player.play();
                     {
                         let mut s = state.lock();
                         s.status = PlaybackStatus::Loading;
@@ -1179,6 +1180,7 @@ async fn command_processor(
                 let _ = client.enable_voice_transmission(false);
                 audio_reset.store(true, Ordering::Relaxed);
                 youtube_player.load(uri_str);
+                youtube_player.play();
                 {
                     let mut s = state.lock();
                     s.status = PlaybackStatus::Loading;
@@ -1512,7 +1514,7 @@ async fn command_processor(
 
                         let (radio_on, at_end, allow_rec) = {
                             let s = state.lock();
-                            let at_end = s.current_index.map(|i| i + 1 >= s.queue.len()).unwrap_or(true);
+                            let at_end = s.current_index.map(|i| i + 3 >= s.queue.len()).unwrap_or(true);
                             let allow = s.current().map(|e| e.allow_recommend).unwrap_or(false);
                             (s.radio_enabled, at_end, allow)
                         };
@@ -1602,6 +1604,34 @@ async fn command_processor(
                     }
                 } else if user_id > 0 {
                     reply_t(user_id, Key::StartOfQueue, &[]);
+                }
+            }
+
+            BotCommand::Replay { user_id: _ } => {
+                let service = {
+                    let mut s = state.lock();
+                    s.position_ms = 0;
+                    s.current().map(|e| e.track.service()).unwrap_or(s.active_service)
+                };
+                audio_reset.store(true, Ordering::Relaxed);
+                pause_flag.store(false, Ordering::Relaxed);
+                timing_reset.store(true, Ordering::Relaxed);
+                match service {
+                    crate::services::Service::Spotify => {
+                        player.seek(0);
+                        player.play();
+                    }
+                    crate::services::Service::YouTube => {
+                        youtube_player.seek(0);
+                        youtube_player.play();
+                    }
+                }
+                let mut s = state.lock();
+                s.status = PlaybackStatus::Playing;
+                if let Some(entry) = s.current() {
+                    let name = entry.track.display_name();
+                    drop(s);
+                    announce_playing_status(&name);
                 }
             }
 
@@ -1872,7 +1902,7 @@ async fn command_processor(
                 let (radio_on, is_active, current_uri, queue_at_end, allow_rec) = {
                     let s = state.lock();
                     let cur_uri = s.current().map(|e| e.track.uri().to_string());
-                    let at_end = s.current_index.map(|i| i + 1 >= s.queue.len()).unwrap_or(true);
+                    let at_end = s.current_index.map(|i| i + 3 >= s.queue.len()).unwrap_or(true);
                     let allow = s.current().map(|e| e.allow_recommend).unwrap_or(false);
                     (s.radio_enabled, s.status != PlaybackStatus::Idle, cur_uri, at_end, allow)
                 };
