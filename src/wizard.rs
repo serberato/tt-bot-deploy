@@ -252,7 +252,8 @@ pub fn run_wizard(config_name: Option<&str>, offer_service: bool) -> Result<(), 
             println!("  Starting Spotify authentication...");
             // Spawn a new thread with its own tokio runtime to avoid
             // nested-runtime panic (wizard is sync, may be called from async main)
-            let auth_result = std::thread::spawn(|| {
+            let name_clone = name.clone();
+            let auth_result = std::thread::spawn(move || {
                 let rt = match tokio::runtime::Runtime::new() {
                     Ok(rt) => rt,
                     Err(e) => {
@@ -260,7 +261,7 @@ pub fn run_wizard(config_name: Option<&str>, offer_service: bool) -> Result<(), 
                         return None;
                     }
                 };
-                let mut auth = crate::spotify::auth::SpotifyAuth::new(&name);
+                let mut auth = crate::spotify::auth::SpotifyAuth::new(&name_clone);
                 Some(rt.block_on(auth.connect()))
             }).join().ok().flatten();
 

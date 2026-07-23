@@ -303,7 +303,7 @@ pub async fn run_bot(
         pipeline.run();
     });
 
-    let profile_name = config_store.path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+    let profile_name = config_store_path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
     let auth = crate::spotify::auth::SpotifyAuth::new(&profile_name);
     let session = auth.new_session();
 
@@ -1346,7 +1346,7 @@ async fn command_processor(
                             } else {
                                 None
                             };
-                            (should_start, loader_gen, count, added_name)
+                            (should_start, generation, count, added_name)
                         };
 
                         if let Some(generation) = loader_gen {
