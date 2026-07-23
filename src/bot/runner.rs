@@ -303,7 +303,7 @@ pub async fn run_bot(
         pipeline.run();
     });
 
-    let profile_name = config_store_path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+    let profile_name = std::path::Path::new(&config_path).file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
     let auth = crate::spotify::auth::SpotifyAuth::new(&profile_name);
     let session = auth.new_session();
 
