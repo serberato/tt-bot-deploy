@@ -78,8 +78,8 @@ impl SpotifyAuth {
         let audio_cache_dir = cache_dir.join("audio");
 
         let cache = Cache::new(
-            Some(base),
-            Some(cache_dir),
+            Some(cache_dir.clone()),
+            Some(cache_dir.clone()),
             Some(audio_cache_dir),
             None,
         ).ok();
