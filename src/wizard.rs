@@ -198,7 +198,7 @@ pub fn run_wizard(config_name: Option<&str>, offer_service: bool) -> Result<(), 
         want_cookies.as_deref(),
         Some(v) if v.eq_ignore_ascii_case("y") || v.eq_ignore_ascii_case("yes")
     ) {
-        let default = setup::default_cookies_path().to_string_lossy().into_owned();
+        let default = setup::default_cookies_path(&name).to_string_lossy().into_owned();
         match ask("Cookies file path", &default, false) {
             Some(p) => {
                 if !p.is_empty() && !std::path::Path::new(&p).is_file() {
@@ -260,7 +260,7 @@ pub fn run_wizard(config_name: Option<&str>, offer_service: bool) -> Result<(), 
                         return None;
                     }
                 };
-                let mut auth = crate::spotify::auth::SpotifyAuth::new();
+                let mut auth = crate::spotify::auth::SpotifyAuth::new(&name);
                 Some(rt.block_on(auth.connect()))
             }).join().ok().flatten();
 

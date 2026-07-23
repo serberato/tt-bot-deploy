@@ -62,7 +62,7 @@ fn detect_headless() -> bool {
 
 impl Default for SpotifyAuth {
     fn default() -> Self {
-        Self::new()
+        Self::new("")
     }
 }
 

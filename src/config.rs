@@ -479,6 +479,19 @@ impl ConfigStore {
         }
     }
 
+    pub fn get(&self) -> parking_lot::MutexGuard<'_, BotConfig> {
+        self.cfg.lock()
+    }
+
+    pub fn get_idle_status(&self) -> String {
+        let text = self.get().custom_status.clone();
+        if text.trim().is_empty() {
+            "Send h for help".to_string()
+        } else {
+            text
+        }
+    }
+
     /// Apply a mutation to the config and persist it atomically, all under one
     /// lock. Before mutating, re-sync from disk so edits made externally (e.g.
     /// the tray GUI's config editor writing the same file in another thread)

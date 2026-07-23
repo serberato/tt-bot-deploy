@@ -476,19 +476,10 @@ pub async fn run_bot(
         });
     }
 
-    let get_idle_status = || {
-        let text = config_store.get().custom_status.clone();
-        if text.trim().is_empty() {
-            "Send h for help".to_string()
-        } else {
-            text
-        }
-    };
-
     {
         let mut status = ::teamtalk::types::UserStatus::default();
         status.gender = bot_gender;
-        let _ = client.set_status(status, &get_idle_status());
+        let _ = client.set_status(status, &config_store.get_idle_status());
     }
     send_event(RunnerEvent::Idle);
 
@@ -1202,7 +1193,7 @@ async fn command_processor(
         use crate::player::MediaPlayer as _;
         player.stop();
         youtube_player.stop();
-        set_status(&get_idle_status());
+        set_status(&config_store.get_idle_status());
         send_event(RunnerEvent::Idle);
         {
             let s = state.lock();
@@ -1241,7 +1232,7 @@ async fn command_processor(
                 s.clear();
                 s.position_ms = 0;
             }
-            set_status(&get_idle_status());
+            set_status(&config_store.get_idle_status());
             send_event(RunnerEvent::Idle);
         }};
     }
@@ -1480,7 +1471,7 @@ async fn command_processor(
                     let mut s = state.lock();
                     s.clear();
                 }
-                set_status(&get_idle_status());
+                set_status(&config_store.get_idle_status());
                 send_event(RunnerEvent::Idle);
             }
 
@@ -1592,7 +1583,7 @@ async fn command_processor(
                                 let mut s = state.lock();
                                 s.position_ms = 0;
                             }
-                            set_status(&get_idle_status());
+                            set_status(&config_store.get_idle_status());
                             send_event(RunnerEvent::Idle);
                         }
                     }
@@ -1790,7 +1781,7 @@ async fn command_processor(
                 // We don't apply it immediately if something is playing,
                 // but if idle, we apply it.
                 if state.lock().status == PlaybackStatus::Idle {
-                    set_status(&get_idle_status());
+                    set_status(&config_store.get_idle_status());
                 }
             }
 
@@ -1799,7 +1790,7 @@ async fn command_processor(
                 let current_name = state.lock().current().map(|e| e.track.display_name());
                 let status_text = current_name
                     .map(|name| now_playing_status(&name, &state))
-                    .unwrap_or_else(|| get_idle_status());
+                    .unwrap_or_else(|| config_store.get_idle_status());
                 let mut status = ::teamtalk::types::UserStatus::default();
                 status.gender = new_gender;
                 let _ = client.set_status(status, &status_text);
