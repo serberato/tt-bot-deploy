@@ -96,3 +96,4 @@ end_of_queue = Fin de la cola
 invalid_pick = Selección inválida o sin resultados de búsqueda
 channel_not_found = Canal no encontrado: {path}
 failed_to_start = Error al iniciar la pista: {track}
+start_of_queue = Principio de la cola

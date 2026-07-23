@@ -1600,6 +1600,8 @@ async fn command_processor(
                         reply_t(user_id, Key::NowPlaying, &[("track", name.clone())]);
                         announce_playing_status(&name);
                     }
+                } else if user_id > 0 {
+                    reply_t(user_id, Key::StartOfQueue, &[]);
                 }
             }
 

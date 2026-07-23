@@ -131,6 +131,7 @@ keys! {
     RadioNoRecs => "radio_no_recs",
     RadioFailed => "radio_failed",
     EndOfQueue => "end_of_queue",
+    StartOfQueue => "start_of_queue",
     InvalidPick => "invalid_pick",
     ChannelNotFound => "channel_not_found",
     FailedToStart => "failed_to_start",

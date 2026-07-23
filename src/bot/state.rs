@@ -206,6 +206,8 @@ impl PlayerState {
                 self.current_index = Some(idx - 1);
             } else if self.repeat_queue {
                 self.current_index = Some(self.queue.len() - 1);
+            } else {
+                return None;
             }
         } else {
             self.current_index = Some(self.queue.len() - 1);

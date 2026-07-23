@@ -222,3 +222,4 @@ channel_not_found = Channel not found: {path}
 
 # Shown when a track could not be started. {track} = the track title.
 failed_to_start = Failed to start track: {track}
+start_of_queue = Start of queue
