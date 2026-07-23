@@ -1,0 +1,18 @@
+/target
+**/target
+
+# Config and credentials (contains passwords, tokens)
+/data/
+*.credentials.json
+
+# Claude Code
+/.claude/
+CLAUDE.md
+
+# Build artifacts
+/TEAMTALK_DLL/
+/TeamTalkRust/
+/api/
+
+# rustypipe cache written next to the CWD when running from the repo
+rustypipe_cache.json

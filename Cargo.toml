@@ -1,0 +1,100 @@
+[package]
+name = "tt-spotify-bot"
+version = "0.7.0"
+edition = "2021"
+default-run = "tt-spotify-bot"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+# TeamTalk SDK. Fork of BlindMaster24/TeamTalkRust; the `arm64-linux` branch
+# adds aarch64 SDK downloading (upstream only fetches win64 + x86_64).
+teamtalk = { git = "https://github.com/LuciferM242/TeamTalkRust.git", branch = "arm64-linux", features = ["logging"] }
+
+# Spotify (librespot - native Rust). default-features = false drops the default
+# native-tls stack (OpenSSL) in favor of rustls (which the rest of the app
+# already uses), and drops librespot-playback's rodio/cpal speaker backend that
+# this bot never uses (audio goes to a custom TeamTalkSink, not local output).
+librespot-core = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
+librespot-playback = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
+librespot-metadata = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
+librespot-oauth = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
+
+# YouTube (rustypipe - GPL-3). Switch its default native-tls to rustls so the
+# whole app shares one TLS stack instead of compiling OpenSSL alongside rustls.
+rustypipe = { version = "0.11", default-features = false, features = ["rustls-tls-native-roots"] }
+
+# YouTube audio: HTTP fetch + decode + resample.
+# symphonia decodes YouTube's m4a (ISO-MP4 container + AAC). default-features
+# = false drops decoders nothing feeds it (adpcm/mkv/pcm/wav); Spotify's
+# ogg/vorbis are still pulled in by librespot-playback.
+# rubato resamples to the 44.1k pipeline rate.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+symphonia = { version = "0.5", default-features = false, features = ["isomp4", "aac"] }
+rubato = "0.16"
+
+# Plugin zip extraction for the YouTube binaries auto-installer + Windows
+# release-archive extraction in the self-updater.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+# Self-updater: verify the minisign signature over SHA256SUMS, swap the running
+# binary, decode the Linux/arm .tar.gz release archives, compare semver
+# versions, and stream download chunks for progress reporting.
+minisign-verify = "0.2"
+self-replace = "1"
+tar = "0.4"
+flate2 = "1"
+semver = "1"
+futures-util = { version = "0.3", default-features = false }
+
+# SHA-256 verification of downloaded binaries (yt-dlp / bgutil-pot).
+sha2 = "0.10"
+
+# Async runtime
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+
+# Audio
+crossbeam-channel = "0.5"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+
+# Config & serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+
+# Utilities
+regex = "1"
+rand = "0.8"
+percent-encoding = "2"
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+parking_lot = "0.12"
+librespot-connect = "0.8.0"
+
+[profile.release]
+strip = true
+lto = true
+panic = "abort"
+# Single codegen unit: with fat LTO already on, this lets the optimizer see the
+# whole crate graph as one unit for slightly smaller/faster output. Costs some
+# link time (release builds only; debug/check unaffected).
+codegen-units = 1
+
+# GUI (Windows tray + config editor)
+[target.'cfg(windows)'.dependencies]
+wxdragon = "0.9"
+# Per-user autostart via the HKCU Run registry key.
+winreg = "0.52"
+
+[target.'cfg(windows)'.build-dependencies]
+embed-manifest = "1.5"
+
+[[bin]]
+name = "tt-spotify-bot"
+path = "src/main.rs"
+
