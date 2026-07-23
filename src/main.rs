@@ -101,14 +101,25 @@ async fn main() -> Result<(), BotError> {
         return tt_spotify_bot::service::uninstall_service();
     }
 
+    let config_path = args.config.clone().unwrap_or_else(|| {
+        let configs = tt_spotify_bot::config::list_configs();
+        if let Some((_, path)) = configs.first() {
+            path.to_string_lossy().into_owned()
+        } else {
+            tt_spotify_bot::config::config_dir().join("config.json")
+                .to_string_lossy().into_owned()
+        }
+    });
+    let profile_name = std::path::Path::new(&config_path).file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+
     if args.auth_status {
-        let auth = tt_spotify_bot::spotify::auth::SpotifyAuth::new();
+        let auth = tt_spotify_bot::spotify::auth::SpotifyAuth::new(&profile_name);
         if auth.has_cached_credentials() {
-            println!("Spotify: Cached credentials found.");
+            println!("Spotify: Cached credentials found for profile {}.", profile_name);
             println!("  (Note: credentials may be expired or revoked.)");
             std::process::exit(0);
         } else {
-            println!("Spotify: No cached credentials.");
+            println!("Spotify: No cached credentials for profile {}.", profile_name);
             println!("  Run with --auth to authenticate.");
             std::process::exit(1);
         }
@@ -147,7 +158,7 @@ async fn main() -> Result<(), BotError> {
             )
             .init();
 
-        let mut auth = tt_spotify_bot::spotify::auth::SpotifyAuth::new();
+        let mut auth = tt_spotify_bot::spotify::auth::SpotifyAuth::new(&profile_name);
         match auth.connect().await {
             Ok(_) => {
                 println!("Spotify authentication successful. Credentials cached.");
@@ -160,15 +171,7 @@ async fn main() -> Result<(), BotError> {
         }
     }
 
-    let config_path = args.config.unwrap_or_else(|| {
-        let configs = tt_spotify_bot::config::list_configs();
-        if let Some((_, path)) = configs.first() {
-            path.to_string_lossy().into_owned()
-        } else {
-            tt_spotify_bot::config::config_dir().join("config.json")
-                .to_string_lossy().into_owned()
-        }
-    });
+
 
     let _log_guard = tt_spotify_bot::logging::init_logging(&config_path);
 
