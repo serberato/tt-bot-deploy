@@ -316,11 +316,11 @@ pub fn run_wizard(config_name: Option<&str>, offer_service: bool) -> Result<(), 
     // `offer_service`), and only when actually booted under systemd — OpenRC/
     // runit/s6 users just get the run-it-directly hint below.
     #[cfg(target_os = "linux")]
-    if offer_service && crate::service::systemd_booted() {
+    if offer_service && crate::daemon::systemd_booted() {
         println!();
         println!("Systemd Service");
-        if crate::service::service_installed() {
-            crate::service::offer_enable_instance(&name);
+        if crate::daemon::service_installed() {
+            crate::daemon::offer_enable_instance(&name);
         } else {
             let install = ask(
                 "Systemd service not installed. Install it now? (y/N)",
@@ -333,7 +333,7 @@ pub fn run_wizard(config_name: Option<&str>, offer_service: bool) -> Result<(), 
             ) {
                 // install_service prints its own guidance and offers to
                 // enable/start every config, including the one just created.
-                if let Err(e) = crate::service::install_service() {
+                if let Err(e) = crate::daemon::install_service() {
                     println!("  Service install failed: {e}");
                     println!("  You can retry later with: tt-spotify-bot --install-service");
                 }

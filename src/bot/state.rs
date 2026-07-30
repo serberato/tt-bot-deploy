@@ -129,12 +129,12 @@ impl PlayerState {
         }
     }
 
-    pub fn enqueue_all(&mut self, tracks: Vec<Track>, requester: String, allow_recommend: bool) {
+    pub fn enqueue_all(&mut self, tracks: Vec<Track>, requester: &str, allow_recommend: bool) {
         let was_empty = self.queue.is_empty();
         for track in tracks {
             self.queue.push(QueueEntry {
                 track,
-                requester: requester.clone(),
+                requester: requester.to_string(),
                 allow_recommend,
             });
         }
@@ -206,8 +206,6 @@ impl PlayerState {
                 self.current_index = Some(idx - 1);
             } else if self.repeat_queue {
                 self.current_index = Some(self.queue.len() - 1);
-            } else {
-                return None;
             }
         } else {
             self.current_index = Some(self.queue.len() - 1);
@@ -247,12 +245,19 @@ impl PlayerState {
     /// Drop incoming tracks that are already in the queue (by track id), so
     /// repeating a bulk source (liked songs, a playlist) doesn't duplicate it.
     pub fn filter_unqueued(&self, tracks: Vec<Track>) -> Vec<Track> {
-        let queued: std::collections::HashSet<&str> =
-            self.queue.iter().map(|e| e.track.id()).collect();
-        tracks
-            .into_iter()
-            .filter(|t| !queued.contains(t.id()))
-            .collect()
+        if self.queue.len() < 32 {
+            tracks
+                .into_iter()
+                .filter(|t| !self.queue.iter().any(|e| e.track.id() == t.id()))
+                .collect()
+        } else {
+            let queued: std::collections::HashSet<&str> =
+                self.queue.iter().map(|e| e.track.id()).collect();
+            tracks
+                .into_iter()
+                .filter(|t| !queued.contains(t.id()))
+                .collect()
+        }
     }
 
     pub fn remove(&mut self, index: usize) -> Option<QueueEntry> {
@@ -355,7 +360,7 @@ mod tests {
     #[test]
     fn clear_upcoming_keeps_current_and_invalidates_bulk_loader() {
         let mut state = PlayerState::new();
-        state.enqueue_all(vec![track("a"), track("b"), track("c")], "u".to_string(), false);
+        state.enqueue_all(vec![track("a"), track("b"), track("c")], "u", false);
         state.current_index = Some(0);
         let g = state.begin_bulk_load();
         state.clear_upcoming();
@@ -368,7 +373,7 @@ mod tests {
     #[test]
     fn clear_upcoming_with_no_current_empties_queue_and_invalidates_loader() {
         let mut state = PlayerState::new();
-        state.enqueue_all(vec![track("a"), track("b")], "u".to_string(), false);
+        state.enqueue_all(vec![track("a"), track("b")], "u", false);
         // Played past the end of the queue: entries remain but none is current.
         state.current_index = None;
         let g = state.begin_bulk_load();
@@ -442,7 +447,7 @@ mod tests {
     #[test]
     fn enqueue_all_on_empty_queue_sets_current_index() {
         let mut state = PlayerState::new();
-        state.enqueue_all(vec![track("a"), track("b")], "u".into(), false);
+        state.enqueue_all(vec![track("a"), track("b")], "u", false);
         assert_eq!(state.current_index, Some(0));
         assert_eq!(state.queue.len(), 2);
     }
@@ -451,7 +456,7 @@ mod tests {
     fn enqueue_all_on_non_empty_queue_keeps_current_index() {
         let mut state = PlayerState::new();
         state.enqueue(track("a"), "u".into(), true);
-        state.enqueue_all(vec![track("b"), track("c")], "u".into(), false);
+        state.enqueue_all(vec![track("b"), track("c")], "u", false);
         assert_eq!(state.current_index, Some(0));
         assert_eq!(state.queue.len(), 3);
     }
@@ -459,7 +464,7 @@ mod tests {
     #[test]
     fn enqueue_all_with_empty_vec_on_empty_queue_leaves_index_none() {
         let mut state = PlayerState::new();
-        state.enqueue_all(vec![], "u".into(), true);
+        state.enqueue_all(vec![], "u", true);
         assert_eq!(state.current_index, None);
     }
 

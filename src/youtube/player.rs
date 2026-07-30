@@ -388,7 +388,7 @@ fn decode_and_stream(
             if ctrl.seek_requested.load(Ordering::Relaxed) {
                 break;
             }
-            std::thread::sleep(Duration::from_millis(50));
+            std::thread::sleep(Duration::from_millis(250));
         }
 
         // Serve a pending seek with a native symphonia seek (both directions).
@@ -496,17 +496,16 @@ fn decode_and_stream(
             // paused or stopped track exits within ~50ms instead of stalling
             // until the audio pipeline drains.
             let mut frame = Some(frame);
-            loop {
+            while let Some(samples) = frame.take() {
                 if ctrl.stopped.load(Ordering::Relaxed) {
                     return Ok(());
                 }
-                match audio_tx.try_send(frame.take().expect("set in this loop")) {
+                match audio_tx.send_timeout(samples, Duration::from_millis(100)) {
                     Ok(()) => break,
-                    Err(crossbeam_channel::TrySendError::Full(returned)) => {
+                    Err(crossbeam_channel::SendTimeoutError::Timeout(returned)) => {
                         frame = Some(returned);
-                        std::thread::sleep(Duration::from_millis(10));
                     }
-                    Err(crossbeam_channel::TrySendError::Disconnected(_)) => return Ok(()),
+                    Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => return Ok(()),
                 }
             }
 

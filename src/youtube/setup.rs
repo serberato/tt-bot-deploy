@@ -135,7 +135,6 @@ pub fn migrate_tools_dir(legacy: &Path, target: &Path) -> bool {
 /// Move a legacy exe-side tools install to the XDG data dir (Linux only; on
 /// Windows the exe-side dir remains the home). Call at startup before
 /// anything resolves tool paths.
-#[cfg(not(windows))]
 pub fn migrate_legacy_tools() {
     let Ok(exe) = std::env::current_exe() else { return };
     let Some(exe_dir) = exe.parent() else { return };

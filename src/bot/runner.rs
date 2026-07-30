@@ -467,7 +467,6 @@ pub async fn run_bot(
 
     // One-shot, non-blocking update check. Logs a breadcrumb if a newer release
     // exists; never blocks startup and never self-updates a running service.
-    #[cfg(not(windows))]
     if crate::settings::load().check_updates_on_startup {
         tokio::spawn(async {
             if let Ok(Some(info)) = crate::update::check().await {
@@ -730,7 +729,7 @@ fn spawn_youtube_bulk_loader(
                 }
                 let fresh = s.filter_unqueued(batch);
                 if !fresh.is_empty() {
-                    s.enqueue_all(fresh, requester.clone(), false);
+                    s.enqueue_all(fresh, &requester, false);
                 }
             }
             tokio::time::sleep(BULK_BG_DELAY).await;
@@ -765,7 +764,7 @@ fn spawn_bulk_loader(
                 // A repeated bulk source may overlap what's queued already.
                 let fresh = s.filter_unqueued(batch);
                 if !fresh.is_empty() {
-                    s.enqueue_all(fresh, requester.clone(), false);
+                    s.enqueue_all(fresh, &requester, false);
                 }
             }
             tokio::time::sleep(BULK_BG_DELAY).await;
@@ -1342,7 +1341,7 @@ async fn command_processor(
                             };
                             let count = fresh.len();
                             let added_name = fresh.first().map(|t| t.display_name());
-                            s.enqueue_all(fresh, user_name.clone(), !is_multi);
+                            s.enqueue_all(fresh, &user_name, !is_multi);
                             let generation = if bulk_rest.is_some() {
                                 Some(s.begin_bulk_load())
                             } else {
@@ -1539,7 +1538,7 @@ async fn command_processor(
                                         let first_name = tracks[0].display_name();
                                         {
                                             let mut s = state.lock();
-                                            s.enqueue_all(tracks, "Radio".to_string(), true);
+                                            s.enqueue_all(tracks, "Radio", true);
                                         }
                                         if start_or_skip!(crate::services::Service::Spotify, &first_uri, user_id, &first_name) {
                                             resumed = true;
@@ -1920,7 +1919,7 @@ async fn command_processor(
                                 let count = tracks.len();
                                 {
                                     let mut s = state.lock();
-                                    s.enqueue_all(tracks, "Radio".to_string(), true);
+                                    s.enqueue_all(tracks, "Radio", true);
                                 }
                                 tracing::info!("Radio: pre-fetched {count} tracks from seed {seed_uri}");
                             }

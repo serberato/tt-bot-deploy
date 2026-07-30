@@ -85,15 +85,6 @@ panic = "abort"
 # link time (release builds only; debug/check unaffected).
 codegen-units = 1
 
-# GUI (Windows tray + config editor)
-[target.'cfg(windows)'.dependencies]
-wxdragon = "0.9"
-# Per-user autostart via the HKCU Run registry key.
-winreg = "0.52"
-
-[target.'cfg(windows)'.build-dependencies]
-embed-manifest = "1.5"
-
 [[bin]]
 name = "tt-spotify-bot"
 path = "src/main.rs"

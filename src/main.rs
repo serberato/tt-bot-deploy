@@ -1,18 +1,9 @@
-#![cfg_attr(windows, windows_subsystem = "windows")]
-//! Entry point. On Windows this is the system-tray GUI; on every other
-//! platform it is the CLI bot. Only one `main` compiles per target.
+//! Entry point for tt-spotify-bot CLI daemon.
 
-#[cfg(not(windows))]
 use std::sync::Arc;
-
-#[cfg(not(windows))]
 use clap::Parser;
-
-#[cfg(not(windows))]
 use tt_spotify_bot::bot::runner::BotExit;
-#[cfg(not(windows))]
 use tt_spotify_bot::config::BotConfig;
-#[cfg(not(windows))]
 use tt_spotify_bot::error::BotError;
 
 /// TeamTalk SDK version this build pins by default. The teamtalk crate reads
@@ -31,7 +22,6 @@ fn pin_teamtalk_sdk_version() {
     tt_spotify_bot::tt::sdk::pin_sdk_dir();
 }
 
-#[cfg(not(windows))]
 #[derive(Parser)]
 #[command(name = "tt-spotify-bot", about = "TeamTalk Spotify Bot")]
 struct Args {
@@ -77,8 +67,7 @@ struct Args {
     update: bool,
 }
 
-#[cfg(not(windows))]
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), BotError> {
     pin_teamtalk_sdk_version();
     // One-time move of an old exe-side tools install to the XDG data dir,
@@ -94,11 +83,11 @@ async fn main() -> Result<(), BotError> {
 
     #[cfg(target_os = "linux")]
     if args.install_service {
-        return tt_spotify_bot::service::install_service();
+        return tt_spotify_bot::daemon::install_service();
     }
     #[cfg(target_os = "linux")]
     if args.uninstall_service {
-        return tt_spotify_bot::service::uninstall_service();
+        return tt_spotify_bot::daemon::uninstall_service();
     }
 
     let config_path = args.config.clone().unwrap_or_else(|| {
@@ -204,7 +193,6 @@ async fn main() -> Result<(), BotError> {
 /// Interactive `--update`: check GitHub, show the changelog, confirm, then
 /// download + verify + replace this binary. Refuses to run non-interactively
 /// (e.g. under systemd) since it needs a y/N answer.
-#[cfg(not(windows))]
 async fn run_cli_update() -> Result<(), BotError> {
     use std::io::{IsTerminal, Write};
     use std::sync::atomic::AtomicBool;
@@ -258,9 +246,9 @@ async fn run_cli_update() -> Result<(), BotError> {
             // Offer the unit refresh BEFORE restarting bots so a restart
             // picks up the rewritten (daemon-reloaded) unit.
             #[cfg(target_os = "linux")]
-            tt_spotify_bot::service::offer_unit_refresh();
+            tt_spotify_bot::daemon::offer_unit_refresh();
             #[cfg(target_os = "linux")]
-            tt_spotify_bot::service::offer_restart_running_bots();
+            tt_spotify_bot::daemon::offer_restart_running_bots();
             #[cfg(not(target_os = "linux"))]
             println!("Restart the bot to use the new version.");
             Ok(())
@@ -272,40 +260,4 @@ async fn run_cli_update() -> Result<(), BotError> {
     }
 }
 
-/// Windows system-tray app. Manages multiple bot instances via a wxDragon
-/// tray icon. `--setup` opens the GUI config dialog directly.
-#[cfg(windows)]
-fn main() {
-    pin_teamtalk_sdk_version();
-    tt_spotify_bot::logging::install_panic_hook();
-    let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|a| a == "--setup") {
-        let name_arg = args
-            .iter()
-            .position(|a| a == "--setup")
-            .and_then(|i| args.get(i + 1))
-            .filter(|s| !s.starts_with('-'));
 
-        let (config, path) = if let Some(name) = name_arg {
-            let p = tt_spotify_bot::config::config_dir().join(format!("{name}.json"));
-            if p.exists() {
-                let cfg = tt_spotify_bot::config::BotConfig::load(p.to_str().unwrap_or(""))
-                    .unwrap_or_default();
-                (cfg, Some(p))
-            } else {
-                (tt_spotify_bot::config::BotConfig::default(), None)
-            }
-        } else {
-            (tt_spotify_bot::config::BotConfig::default(), None)
-        };
-
-        let _ = wxdragon::main(|_| {
-            tt_spotify_bot::gui::config_dialog::open_config_dialog(config, path, |saved_path| {
-                tracing::info!("Config saved to: {}", saved_path.display());
-            });
-        });
-        return;
-    }
-
-    tt_spotify_bot::gui::run();
-}

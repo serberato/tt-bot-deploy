@@ -52,7 +52,11 @@ impl Framer {
             return false;
         }
         for slot in out.iter_mut() {
-            *slot = self.buf.pop_front().unwrap();
+            if let Some(sample) = self.buf.pop_front() {
+                *slot = sample;
+            } else {
+                break;
+            }
         }
         true
     }
@@ -85,6 +89,10 @@ impl PrebufferGate {
     fn rearm(&mut self) {
         self.open = self.target_samples == 0;
         self.idle_polls = 0;
+    }
+
+    fn is_open(&self) -> bool {
+        self.open
     }
 
     /// Data arrived; `buffered` is the framer fill level. Opens the gate once
@@ -244,7 +252,7 @@ impl AudioPipeline {
             // silently skipped the buffered seconds on every pause/resume.
             if self.pause_flag.load(Ordering::Relaxed) {
                 self.next_block_time = None;
-                std::thread::sleep(Duration::from_millis(50));
+                std::thread::sleep(Duration::from_millis(250));
                 continue;
             }
 
@@ -270,8 +278,18 @@ impl AudioPipeline {
                 );
             }
 
-            // Receive PCM data from the sink (with timeout so reset flag is checked)
-            match self.audio_rx.recv_timeout(Duration::from_millis(50)) {
+            // Zero-CPU idle: when the jitter gate is open and the buffer is empty
+            // (no audio playing or between tracks), block indefinitely on recv()
+            // instead of waking up 20 times per second.
+            let pcm_res = if self.prebuffer.is_open() && self.framer.len() == 0 {
+                self.audio_rx
+                    .recv()
+                    .map_err(|_| crossbeam_channel::RecvTimeoutError::Disconnected)
+            } else {
+                self.audio_rx.recv_timeout(Duration::from_millis(50))
+            };
+
+            match pcm_res {
                 Ok(pcm_data) => {
                     self.framer.push(&pcm_data);
                 }
@@ -375,7 +393,7 @@ impl AudioPipeline {
             self.next_block_time = Some(now);
         }
 
-        let next_time = self.next_block_time.unwrap();
+        let next_time = self.next_block_time.unwrap_or(now);
         if next_time > now {
             std::thread::sleep(next_time - now);
         } else if now.duration_since(next_time) > Duration::from_millis(200) {
@@ -385,7 +403,8 @@ impl AudioPipeline {
         }
 
         // Advance for next block
-        self.next_block_time = Some(self.next_block_time.unwrap() + block_duration);
+        let base_time = self.next_block_time.unwrap_or(now);
+        self.next_block_time = Some(base_time + block_duration);
     }
 }
 

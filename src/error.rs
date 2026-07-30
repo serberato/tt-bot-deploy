@@ -16,4 +16,10 @@ pub enum BotError {
     NotImplemented(&'static str),
     #[error("IO: {0}")]
     Io(#[from] std::io::Error),
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("HTTP request error: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("Librespot error: {0}")]
+    Librespot(#[from] librespot_core::Error),
 }
