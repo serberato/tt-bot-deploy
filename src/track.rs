@@ -9,66 +9,172 @@ use crate::services::Service;
 use crate::spotify::types::SpotifyTrack;
 use crate::youtube::types::YouTubeTrack;
 
+/// Common metadata interface for tracks across any music service.
+pub trait TrackMetadata {
+    fn service(&self) -> Service;
+    fn id(&self) -> &str;
+    fn uri(&self) -> &str;
+    fn duration_ms(&self) -> u32;
+    fn display_name(&self) -> String;
+    fn duration_display(&self) -> String;
+    fn web_url(&self) -> String;
+}
+
+/// Helper to format a track's display name consistently across services.
+pub fn format_display_name(artists: &[String], name: &str) -> String {
+    format!("{} - {}", artists.join(", "), name)
+}
+
+/// Helper to format duration in milliseconds as `MM:SS` (or `HH:MM:SS`).
+pub fn format_duration_display(duration_ms: u32) -> String {
+    let secs = duration_ms / 1000;
+    format!("{}:{:02}", secs / 60, secs % 60)
+}
+
 #[derive(Debug, Clone)]
 pub enum Track {
     Spotify(SpotifyTrack),
     YouTube(YouTubeTrack),
 }
 
-impl Track {
-    pub fn service(&self) -> Service {
+macro_rules! delegate {
+    ($self:ident, $method:ident) => {
+        match $self {
+            Self::Spotify(t) => t.$method(),
+            Self::YouTube(t) => t.$method(),
+        }
+    };
+}
+
+impl TrackMetadata for SpotifyTrack {
+    fn service(&self) -> Service {
+        Service::Spotify
+    }
+
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn uri(&self) -> &str {
+        &self.uri
+    }
+
+    fn duration_ms(&self) -> u32 {
+        self.duration_ms
+    }
+
+    fn display_name(&self) -> String {
+        self.display_name()
+    }
+
+    fn duration_display(&self) -> String {
+        self.duration_display()
+    }
+
+    fn web_url(&self) -> String {
+        self.uri
+            .replace("spotify:track:", "https://open.spotify.com/track/")
+            .replace("spotify:episode:", "https://open.spotify.com/episode/")
+    }
+}
+
+impl TrackMetadata for YouTubeTrack {
+    fn service(&self) -> Service {
+        Service::YouTube
+    }
+
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn uri(&self) -> &str {
+        &self.id
+    }
+
+    fn duration_ms(&self) -> u32 {
+        self.duration_ms
+    }
+
+    fn display_name(&self) -> String {
+        self.display_name()
+    }
+
+    fn duration_display(&self) -> String {
+        self.duration_display()
+    }
+
+    fn web_url(&self) -> String {
+        format!("https://music.youtube.com/watch?v={}", self.id)
+    }
+}
+
+impl TrackMetadata for Track {
+    fn service(&self) -> Service {
         match self {
             Self::Spotify(_) => Service::Spotify,
             Self::YouTube(_) => Service::YouTube,
         }
     }
 
-    pub fn id(&self) -> &str {
-        match self {
-            Self::Spotify(t) => &t.id,
-            Self::YouTube(t) => &t.id,
-        }
+    fn id(&self) -> &str {
+        delegate!(self, id)
     }
 
-    /// Service-specific URI used by the player to start playback.
-    /// Spotify: `spotify:track:<id>`. YouTube: the bare video ID
-    /// (the YouTubePlayer resolves it to a stream URL).
-    pub fn uri(&self) -> &str {
+    fn uri(&self) -> &str {
         match self {
             Self::Spotify(t) => &t.uri,
             Self::YouTube(t) => &t.id,
         }
     }
 
+    fn duration_ms(&self) -> u32 {
+        delegate!(self, duration_ms)
+    }
+
+    fn display_name(&self) -> String {
+        delegate!(self, display_name)
+    }
+
+    fn duration_display(&self) -> String {
+        delegate!(self, duration_display)
+    }
+
+    fn web_url(&self) -> String {
+        delegate!(self, web_url)
+    }
+}
+
+impl Track {
+    pub fn service(&self) -> Service {
+        TrackMetadata::service(self)
+    }
+
+    pub fn id(&self) -> &str {
+        TrackMetadata::id(self)
+    }
+
+    /// Service-specific URI used by the player to start playback.
+    /// Spotify: `spotify:track:<id>`. YouTube: the bare video ID
+    /// (the YouTubePlayer resolves it to a stream URL).
+    pub fn uri(&self) -> &str {
+        TrackMetadata::uri(self)
+    }
+
     pub fn duration_ms(&self) -> u32 {
-        match self {
-            Self::Spotify(t) => t.duration_ms,
-            Self::YouTube(t) => t.duration_ms,
-        }
+        TrackMetadata::duration_ms(self)
     }
 
     pub fn display_name(&self) -> String {
-        match self {
-            Self::Spotify(t) => t.display_name(),
-            Self::YouTube(t) => t.display_name(),
-        }
+        TrackMetadata::display_name(self)
     }
 
     pub fn duration_display(&self) -> String {
-        match self {
-            Self::Spotify(t) => t.duration_display(),
-            Self::YouTube(t) => t.duration_display(),
-        }
+        TrackMetadata::duration_display(self)
     }
 
     /// Shareable web URL for the track.
     pub fn web_url(&self) -> String {
-        match self {
-            Self::Spotify(t) => t.uri
-                .replace("spotify:track:", "https://open.spotify.com/track/")
-                .replace("spotify:episode:", "https://open.spotify.com/episode/"),
-            Self::YouTube(t) => format!("https://music.youtube.com/watch?v={}", t.id),
-        }
+        TrackMetadata::web_url(self)
     }
 }
 
@@ -148,5 +254,13 @@ mod tests {
         assert_eq!(t.duration_ms(), 90_000);
         assert_eq!(t.display_name(), "Band - Song");
         assert_eq!(t.duration_display(), "1:30");
+    }
+
+    #[test]
+    fn track_metadata_trait_implemented_for_all_variants() {
+        fn assert_track_meta<T: TrackMetadata>() {}
+        assert_track_meta::<SpotifyTrack>();
+        assert_track_meta::<YouTubeTrack>();
+        assert_track_meta::<Track>();
     }
 }

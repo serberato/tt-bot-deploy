@@ -29,11 +29,7 @@ pub fn current_asset_name() -> &'static str {
 pub fn newer_than_current(tag: &str) -> Option<semver::Version> {
     let candidate = semver::Version::parse(tag.trim_start_matches('v')).ok()?;
     let current = semver::Version::parse(env!("CARGO_PKG_VERSION")).ok()?;
-    if candidate > current {
-        Some(candidate)
-    } else {
-        None
-    }
+    (candidate > current).then_some(candidate)
 }
 
 /// Given a parsed `releases/latest` JSON body, produce an `UpdateInfo` if it is
@@ -53,11 +49,9 @@ fn select_from_release(json: &Value) -> Result<Option<UpdateInfo>, UpdateError> 
         .ok_or_else(|| UpdateError::Parse("missing assets".into()))?;
     let url_of = |name: &str| -> Option<String> {
         assets.iter().find_map(|a| {
-            if a["name"].as_str() == Some(name) {
-                a["browser_download_url"].as_str().map(str::to_string)
-            } else {
-                None
-            }
+            (a["name"].as_str() == Some(name))
+                .then(|| a["browser_download_url"].as_str().map(ToOwned::to_owned))
+                .flatten()
         })
     };
 

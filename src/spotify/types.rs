@@ -15,12 +15,11 @@ pub struct SpotifyTrack {
 
 impl SpotifyTrack {
     pub fn display_name(&self) -> String {
-        format!("{} - {}", self.artists.join(", "), self.name)
+        crate::track::format_display_name(&self.artists, &self.name)
     }
 
     pub fn duration_display(&self) -> String {
-        let secs = self.duration_ms / 1000;
-        format!("{}:{:02}", secs / 60, secs % 60)
+        crate::track::format_duration_display(self.duration_ms)
     }
 }
 

@@ -48,24 +48,24 @@ impl std::error::Error for UpdateError {}
 /// removes bold (`**`) and inline-code (backtick) markers. Underscores and lone
 /// asterisks are left alone so identifiers like `yt_dlp` aren't corrupted.
 pub fn plain_changelog(md: &str) -> String {
-    let mut out = String::new();
-    for line in md.lines() {
-        let line = line.trim_end();
-        let trimmed = line.trim_start();
-        let rendered = if trimmed.starts_with('#') {
-            // Heading: drop the leading #'s and the space after them.
-            trimmed.trim_start_matches('#').trim_start().to_string()
-        } else if let Some(rest) = trimmed.strip_prefix("- ") {
-            format!("\u{2022} {rest}")
-        } else if let Some(rest) = trimmed.strip_prefix("* ") {
-            format!("\u{2022} {rest}")
-        } else {
-            line.to_string()
-        };
-        out.push_str(&rendered.replace("**", "").replace('`', ""));
-        out.push('\n');
-    }
-    out.trim_end().to_string()
+    md.lines()
+        .map(|line| {
+            let line = line.trim_end();
+            let trimmed = line.trim_start();
+            let rendered = if trimmed.starts_with('#') {
+                trimmed.trim_start_matches('#').trim_start().to_string()
+            } else if let Some(rest) = trimmed
+                .strip_prefix("- ")
+                .or_else(|| trimmed.strip_prefix("* "))
+            {
+                format!("\u{2022} {rest}")
+            } else {
+                line.to_string()
+            };
+            rendered.replace("**", "").replace('`', "")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]

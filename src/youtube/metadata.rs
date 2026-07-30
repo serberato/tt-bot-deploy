@@ -1,11 +1,14 @@
+use std::future::Future;
+use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use rustypipe::client::RustyPipe;
 
-use std::path::PathBuf;
-
 use crate::config::BotConfig;
+use crate::domain::MetadataProvider;
 use crate::error::BotError;
+use crate::track::Track;
 use crate::youtube::setup::{default_cookies_path, resolve_paths, which, YoutubeSetupPaths};
 use crate::youtube::types::{parse_youtube_ref, YouTubeRef, YouTubeTrack};
 
@@ -290,6 +293,30 @@ impl YouTubeMetadata {
     }
 }
 
+impl MetadataProvider for YouTubeMetadata {
+    fn search_tracks<'a>(
+        &'a self,
+        query: &'a str,
+        limit: u8,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Track>, BotError>> + Send + 'a>> {
+        Box::pin(async move {
+            let tracks = YouTubeMetadata::search_tracks(self, query, limit).await?;
+            Ok(tracks.into_iter().map(Track::from).collect())
+        })
+    }
+
+    fn resolve<'a>(
+        &'a self,
+        query: &'a str,
+        limit: u8,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Track>, BotError>> + Send + 'a>> {
+        Box::pin(async move {
+            let tracks = YouTubeMetadata::resolve(self, query, limit).await?;
+            Ok(tracks.into_iter().map(Track::from).collect())
+        })
+    }
+}
+
 fn track_item_to_track(item: rustypipe::model::TrackItem) -> YouTubeTrack {
     YouTubeTrack {
         id: item.id,
@@ -297,5 +324,16 @@ fn track_item_to_track(item: rustypipe::model::TrackItem) -> YouTubeTrack {
         artists: item.artists.into_iter().map(|a| a.name).collect(),
         album: item.album.map(|a| a.name).unwrap_or_default(),
         duration_ms: item.duration.unwrap_or(0).saturating_mul(1000),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn youtube_metadata_implements_metadata_provider() {
+        fn assert_provider<T: crate::domain::MetadataProvider>() {}
+        assert_provider::<YouTubeMetadata>();
     }
 }

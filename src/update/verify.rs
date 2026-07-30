@@ -5,12 +5,12 @@ use sha2::{Digest, Sha256};
 
 /// Lowercase hex SHA-256 of `bytes`.
 pub fn sha256_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
     let mut h = Sha256::new();
     h.update(bytes);
-    let digest = h.finalize();
     let mut s = String::with_capacity(64);
-    for b in digest {
-        s.push_str(&format!("{b:02x}"));
+    for b in h.finalize() {
+        let _ = write!(s, "{b:02x}");
     }
     s
 }
@@ -18,17 +18,10 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 /// Look up the expected hex hash for `asset` in a SHA256SUMS body.
 /// Lines look like: `<hex>  <filename>` (two spaces, `sha256sum` format).
 pub fn expected_hash<'a>(sums: &'a str, asset: &str) -> Option<&'a str> {
-    for line in sums.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let (hash, name) = line.split_once("  ")?;
-        if name.trim() == asset {
-            return Some(hash.trim());
-        }
-    }
-    None
+    sums.lines().find_map(|line| {
+        let (hash, name) = line.trim().split_once("  ")?;
+        (name.trim() == asset).then_some(hash.trim())
+    })
 }
 
 /// Verify a minisign signature (`.minisig` file contents) over `signed_data`

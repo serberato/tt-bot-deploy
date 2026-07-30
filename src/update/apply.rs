@@ -3,37 +3,32 @@ use super::{current_asset_name, UpdateError, UpdateInfo};
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+fn extract_err(e: impl std::fmt::Display) -> UpdateError {
+    UpdateError::Extract(e.to_string())
+}
+
 /// Extract the bot binary from a downloaded release archive held in memory.
 /// Windows assets are `.zip`; Linux/arm are `.tar.gz`. Returns the raw binary
 /// bytes. `binary_name` is the file to pull out of the archive.
 fn extract_binary(archive: &[u8], is_zip: bool, binary_name: &str) -> Result<Vec<u8>, UpdateError> {
     if is_zip {
         let reader = std::io::Cursor::new(archive);
-        let mut zip =
-            zip::ZipArchive::new(reader).map_err(|e| UpdateError::Extract(e.to_string()))?;
+        let mut zip = zip::ZipArchive::new(reader).map_err(extract_err)?;
         let mut file = zip
             .by_name(binary_name)
             .map_err(|e| UpdateError::Extract(format!("{binary_name}: {e}")))?;
         let mut out = Vec::new();
-        file.read_to_end(&mut out)
-            .map_err(|e| UpdateError::Extract(e.to_string()))?;
+        file.read_to_end(&mut out).map_err(extract_err)?;
         Ok(out)
     } else {
         let gz = flate2::read::GzDecoder::new(archive);
         let mut tar = tar::Archive::new(gz);
-        for entry in tar
-            .entries()
-            .map_err(|e| UpdateError::Extract(e.to_string()))?
-        {
-            let mut entry = entry.map_err(|e| UpdateError::Extract(e.to_string()))?;
-            let path = entry
-                .path()
-                .map_err(|e| UpdateError::Extract(e.to_string()))?;
+        for entry in tar.entries().map_err(extract_err)? {
+            let mut entry = entry.map_err(extract_err)?;
+            let path = entry.path().map_err(extract_err)?;
             if path.file_name().and_then(|n| n.to_str()) == Some(binary_name) {
                 let mut out = Vec::new();
-                entry
-                    .read_to_end(&mut out)
-                    .map_err(|e| UpdateError::Extract(e.to_string()))?;
+                entry.read_to_end(&mut out).map_err(extract_err)?;
                 return Ok(out);
             }
         }
@@ -84,6 +79,10 @@ async fn get_bytes(
     Ok(out)
 }
 
+fn io_err(e: impl std::fmt::Display) -> UpdateError {
+    UpdateError::Io(e.to_string())
+}
+
 /// Download SHA256SUMS + its signature + the platform asset, verify the
 /// signature and hash, extract the binary, and replace the running executable.
 /// Nothing is written to the binary unless BOTH signature and hash pass.
@@ -121,12 +120,12 @@ pub async fn download_and_apply(
     let bin = extract_binary(&asset, is_zip, binary_name())?;
 
     // 6. Write to a temp file next to the current exe, then self-replace.
-    let exe = std::env::current_exe().map_err(|e| UpdateError::Io(e.to_string()))?;
+    let exe = std::env::current_exe().map_err(io_err)?;
     let dir = exe
         .parent()
         .ok_or_else(|| UpdateError::Io("no exe dir".into()))?;
     let tmp = dir.join("tt-spotify-bot.update.tmp");
-    std::fs::write(&tmp, &bin).map_err(|e| UpdateError::Io(e.to_string()))?;
+    std::fs::write(&tmp, &bin).map_err(io_err)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -136,7 +135,7 @@ pub async fn download_and_apply(
     // Remove the temp file whether or not the replace succeeded — an early
     // `?` here used to strand tt-spotify-bot.update.tmp next to the exe when
     // the swap failed (locked file, AV, permissions).
-    let replaced = self_replace::self_replace(&tmp).map_err(|e| UpdateError::Io(e.to_string()));
+    let replaced = self_replace::self_replace(&tmp).map_err(io_err);
     let _ = std::fs::remove_file(&tmp);
     replaced?;
 

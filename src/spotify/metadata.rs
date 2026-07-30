@@ -1,3 +1,5 @@
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use librespot_core::session::Session;
@@ -5,8 +7,10 @@ use librespot_core::spotify_uri::SpotifyUri;
 use librespot_metadata::Metadata;
 use parking_lot::Mutex;
 
+use crate::domain::MetadataProvider;
 use crate::error::BotError;
 use crate::spotify::types::{SpotifyRef, SpotifyTrack, parse_spotify_ref};
+use crate::track::Track;
 
 /// Metadata for the tracks to enqueue now, plus URIs still to be fetched by a
 /// background loader (empty when the resolve was complete). `bulk` marks
@@ -291,6 +295,30 @@ impl SpotifyMetadata {
     }
 }
 
+impl MetadataProvider for SpotifyMetadata {
+    fn search_tracks<'a>(
+        &'a self,
+        query: &'a str,
+        limit: u8,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Track>, BotError>> + Send + 'a>> {
+        Box::pin(async move {
+            let tracks = SpotifyMetadata::search_tracks(self, query, limit).await?;
+            Ok(tracks.into_iter().map(Track::from).collect())
+        })
+    }
+
+    fn resolve<'a>(
+        &'a self,
+        query: &'a str,
+        limit: u8,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Track>, BotError>> + Send + 'a>> {
+        Box::pin(async move {
+            let res = SpotifyMetadata::resolve(self, query, limit).await?;
+            Ok(res.tracks.into_iter().map(Track::from).collect())
+        })
+    }
+}
+
 
 /// Build a `spotify:search:` context URI from free-form query text.
 ///
@@ -365,5 +393,11 @@ mod tests {
     #[test]
     fn unreserved_ascii_stays_readable() {
         assert_eq!(search_context_uri("a-b_c.d~e"), "spotify:search:a-b_c.d~e");
+    }
+
+    #[test]
+    fn spotify_metadata_implements_metadata_provider() {
+        fn assert_provider<T: crate::domain::MetadataProvider>() {}
+        assert_provider::<super::SpotifyMetadata>();
     }
 }
