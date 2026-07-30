@@ -33,6 +33,7 @@ pub struct Controller {
 }
 
 impl Controller {
+    #[allow(clippy::too_many_arguments)] // Dependency injection constructor
     pub fn new(
         player: SpotifyPlayer,
         youtube_player: YouTubePlayer,
