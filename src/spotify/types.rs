@@ -60,20 +60,21 @@ pub fn parse_spotify_ref(input: &str) -> Option<SpotifyRef> {
     }
 
     // URL format: https://open.spotify.com/type/id(?params)
-    static SPOTIFY_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"https?://open\.spotify\.com/(track|album|playlist)/([a-zA-Z0-9]+)")
-            .expect("valid spotify URL regex")
+    static SPOTIFY_URL_RE: LazyLock<Option<Regex>> = LazyLock::new(|| {
+        Regex::new(r"https?://open\.spotify\.com/(track|album|playlist)/([a-zA-Z0-9]+)").ok()
     });
 
-    if let Some(caps) = SPOTIFY_URL_RE.captures(input) {
-        let kind = caps.get(1)?.as_str();
-        let id = caps.get(2)?.as_str().to_string();
-        return match kind {
-            "track" => Some(SpotifyRef::Track(id)),
-            "album" => Some(SpotifyRef::Album(id)),
-            "playlist" => Some(SpotifyRef::Playlist(id)),
-            _ => None,
-        };
+    if let Some(re) = SPOTIFY_URL_RE.as_ref() {
+        if let Some(caps) = re.captures(input) {
+            let kind = caps.get(1)?.as_str();
+            let id = caps.get(2)?.as_str().to_string();
+            return match kind {
+                "track" => Some(SpotifyRef::Track(id)),
+                "album" => Some(SpotifyRef::Album(id)),
+                "playlist" => Some(SpotifyRef::Playlist(id)),
+                _ => None,
+            };
+        }
     }
 
     None

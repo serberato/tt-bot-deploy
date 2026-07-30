@@ -21,13 +21,13 @@ pub fn handle_join_channel(ctx: &mut HandlerContext, path: String, user_id: i32)
 
 pub fn handle_change_nick(ctx: &mut HandlerContext, name: String, _user_id: i32) {
     let _ = ctx.controller.client.change_nickname(&name);
-    ctx.config_store.update(|cfg| {
+    ctx.lifecycle.config_store.update(|cfg| {
         cfg.bot_name = name;
     });
 }
 
 pub fn handle_set_status(ctx: &mut HandlerContext, status_text: String, _user_id: i32) {
-    ctx.config_store.update(|cfg| {
+    ctx.lifecycle.config_store.update(|cfg| {
         cfg.custom_status = status_text;
     });
     if ctx.controller.state.lock().status == PlaybackStatus::Idle {
@@ -40,17 +40,17 @@ pub fn handle_set_gender(ctx: &mut HandlerContext, gender: String, _user_id: i32
     let current_name = ctx.controller.state.lock().current().map(|e| e.track.display_name());
     let status_text = current_name
         .map(|name| ctx.announcer.now_playing_status(&name, &ctx.controller.state))
-        .unwrap_or_else(|| ctx.config_store.get_idle_status());
+        .unwrap_or_else(|| ctx.lifecycle.config_store.get_idle_status());
     let mut status = ::teamtalk::types::UserStatus::default();
     status.gender = new_gender;
     let _ = ctx.controller.client.set_status(status, &status_text);
-    ctx.config_store.update(|cfg| {
+    ctx.lifecycle.config_store.update(|cfg| {
         cfg.bot_gender = gender;
     });
 }
 
 pub fn handle_set_play_mode(ctx: &mut HandlerContext, mode: PlayMode, _user_id: i32) {
-    ctx.config_store.update(|cfg| {
+    ctx.lifecycle.config_store.update(|cfg| {
         cfg.play_mode = mode;
     });
 }
@@ -62,7 +62,7 @@ pub fn handle_set_service(ctx: &mut HandlerContext, service: Service, _user_id: 
 
 pub fn handle_set_default_language(ctx: &mut HandlerContext, code: String, user_id: i32) {
     ctx.announcer.i18n.set_default(&code);
-    ctx.config_store.update(|cfg| {
+    ctx.lifecycle.config_store.update(|cfg| {
         cfg.default_language = code.clone();
     });
     tracing::info!("Default language set to {code}");

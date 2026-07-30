@@ -32,6 +32,7 @@ pub fn flush_audio(client: &Client) {
     block.lpRawAudio = std::ptr::null_mut();
     block.nSamples = 0;
     block.uSampleIndex = 0;
-    block.uStreamTypes = ffi::StreamType::STREAMTYPE_VOICE as u32;
-    let _ = client.insert_audio_block(&block);
+    if !client.insert_audio_block(&block) {
+        tracing::debug!("Failed to flush audio block (buffer full)");
+    }
 }

@@ -35,7 +35,7 @@ pub async fn handle_radio_prefetch(ctx: &mut HandlerContext, seed_uri: String) {
             .metadata
             .get_radio_tracks(
                 &seed_parsed,
-                ctx.radio_batch_size as usize,
+                ctx.channel.radio_batch_size as usize,
                 &played_ids,
             )
             .await;

@@ -53,7 +53,9 @@ pub fn setup_teamtalk(config: &BotConfig) -> Result<Client, BotError> {
     tracing::info!("Virtual sound devices initialized");
 
     // Disable voice transmission (we inject audio blocks manually)
-    let _ = client.enable_voice_transmission(false);
+    if !client.enable_voice_transmission(false) {
+        tracing::warn!("Failed to disable voice transmission");
+    }
 
     // Set bot gender
     let gender = crate::config::parse_gender(&config.bot_gender);

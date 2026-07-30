@@ -37,15 +37,84 @@ pub fn handle_stop(ctx: &mut HandlerContext, _user_id: i32) {
     ctx.announce_idle();
 }
 
+async fn try_radio_fallback(
+    ctx: &mut HandlerContext,
+    user_id: i32,
+    seed_uri: Option<String>,
+    played_ids: &[String],
+) -> bool {
+    let seed = match seed_uri.and_then(|s| SpotifyUri::from_uri(&s).ok()) {
+        Some(s) => s,
+        None => return false,
+    };
+    ctx.reply_t(user_id, Key::RadioFetching, &[]);
+    let radio_res = ctx
+        .metadata
+        .get_radio_tracks(&seed, ctx.channel.radio_batch_size as usize, played_ids)
+        .await;
+    if radio_res.is_err() {
+        ctx.notify_recovery_if_invalid();
+    }
+    match radio_res {
+        Ok(tracks) if !tracks.is_empty() => {
+            let tracks: Vec<crate::track::Track> = tracks.into_iter().map(Into::into).collect();
+            let first_uri = tracks[0].uri().to_string();
+            let first_name = tracks[0].display_name();
+            {
+                let mut s = ctx.controller.state.lock();
+                s.enqueue_all(tracks, "Radio", true);
+            }
+            if ctx.start_or_skip(Service::Spotify, &first_uri, user_id, &first_name) {
+                ctx.reply_t(user_id, Key::RadioPlaying, &[("track", first_name.clone())]);
+                ctx.announce_playing(&first_name);
+                return true;
+            }
+            false
+        }
+        Ok(_) => {
+            ctx.reply_t(user_id, Key::RadioNoRecs, &[]);
+            false
+        }
+        Err(e) => {
+            ctx.reply_t(
+                user_id,
+                Key::RadioFailed,
+                &[("error", crate::bot::commands::user_error(&e))],
+            );
+            false
+        }
+    }
+}
+
+fn finish_next_playback(
+    ctx: &mut HandlerContext,
+    user_id: i32,
+    prev_index: Option<usize>,
+    resumed: bool,
+) {
+    if !resumed {
+        let was_playing = {
+            let s = ctx.controller.state.lock();
+            s.status == PlaybackStatus::Playing || s.status == PlaybackStatus::Paused
+        };
+        if user_id > 0 && was_playing {
+            ctx.controller.state.lock().current_index = prev_index;
+        } else {
+            ctx.controller.stop_playback();
+            {
+                let mut s = ctx.controller.state.lock();
+                s.position_ms = 0;
+            }
+            ctx.announce_idle();
+        }
+    }
+}
+
 pub async fn handle_next(ctx: &mut HandlerContext, user_id: i32, after_track: Option<String>) {
     {
         let current = ctx.controller.state.lock().current().map(|e| e.track.uri().to_string());
         if auto_advance_is_stale(after_track.as_deref(), current.as_deref()) {
-            tracing::debug!(
-                "Dropping stale auto-advance (after {:?}, current {:?})",
-                after_track,
-                current
-            );
+            tracing::debug!("Dropping stale auto-advance");
             return;
         }
     }
@@ -82,10 +151,10 @@ pub async fn handle_next(ctx: &mut HandlerContext, user_id: i32, after_track: Op
             };
             if radio_on && at_end && allow_rec {
                 crate::bot::handlers::radio::schedule_radio_prefetch(
-                    &ctx.radio_cmd_tx,
-                    uri_str.clone(),
-                    ctx.radio_delay,
-                    &ctx.radio_prefetch_slot,
+                    &ctx.channel.radio_cmd_tx,
+                    uri_str,
+                    ctx.channel.radio_delay,
+                    &ctx.channel.radio_prefetch_slot,
                 );
             }
         }
@@ -93,61 +162,11 @@ pub async fn handle_next(ctx: &mut HandlerContext, user_id: i32, after_track: Op
         let radio_on = ctx.controller.state.lock().radio_enabled;
         let mut resumed = false;
         if radio_on && pre_allow_rec {
-            if let Some(seed) = pre_seed_uri {
-                if let Ok(seed_parsed) = SpotifyUri::from_uri(&seed) {
-                    ctx.reply_t(user_id, Key::RadioFetching, &[]);
-                    let radio_res = ctx.metadata
-                        .get_radio_tracks(&seed_parsed, ctx.radio_batch_size as usize, &pre_played_ids)
-                        .await;
-                    if radio_res.is_err() {
-                        ctx.notify_recovery_if_invalid();
-                    }
-                    match radio_res {
-                        Ok(tracks) if !tracks.is_empty() => {
-                            let tracks: Vec<crate::track::Track> = tracks.into_iter().map(Into::into).collect();
-                            let first_uri = tracks[0].uri().to_string();
-                            let first_name = tracks[0].display_name();
-                            {
-                                let mut s = ctx.controller.state.lock();
-                                s.enqueue_all(tracks, "Radio", true);
-                            }
-                            if ctx.start_or_skip(Service::Spotify, &first_uri, user_id, &first_name) {
-                                resumed = true;
-                                ctx.reply_t(user_id, Key::RadioPlaying, &[("track", first_name.clone())]);
-                                ctx.announce_playing(&first_name);
-                            }
-                        }
-                        Ok(_) => {
-                            ctx.reply_t(user_id, Key::RadioNoRecs, &[]);
-                        }
-                        Err(e) => {
-                            ctx.reply_t(user_id, Key::RadioFailed, &[
-                                ("error", crate::bot::commands::user_error(&e)),
-                            ]);
-                        }
-                    }
-                }
-            }
+            resumed = try_radio_fallback(ctx, user_id, pre_seed_uri, &pre_played_ids).await;
         } else if user_id > 0 {
             ctx.reply_t(user_id, Key::EndOfQueue, &[]);
         }
-
-        if !resumed {
-            let was_playing = {
-                let s = ctx.controller.state.lock();
-                s.status == PlaybackStatus::Playing || s.status == PlaybackStatus::Paused
-            };
-            if user_id > 0 && was_playing {
-                ctx.controller.state.lock().current_index = prev_index;
-            } else {
-                ctx.controller.stop_playback();
-                {
-                    let mut s = ctx.controller.state.lock();
-                    s.position_ms = 0;
-                }
-                ctx.announce_idle();
-            }
-        }
+        finish_next_playback(ctx, user_id, prev_index, resumed);
     }
 }
 
@@ -171,11 +190,11 @@ pub fn handle_seek(ctx: &mut HandlerContext, offset_ms: i32, _user_id: i32) {
 }
 
 pub fn handle_set_volume(ctx: &mut HandlerContext, _percent: u8, _user_id: i32) {
-    if !ctx.pending_volume_save.load(Ordering::Relaxed) {
-        ctx.pending_volume_save.store(true, Ordering::Relaxed);
-        let save_flag = ctx.pending_volume_save.clone();
-        let vol_ref = ctx.volume_for_save.clone();
-        let store = ctx.config_store.clone();
+    if !ctx.lifecycle.pending_volume_save.load(Ordering::Relaxed) {
+        ctx.lifecycle.pending_volume_save.store(true, Ordering::Relaxed);
+        let save_flag = ctx.lifecycle.pending_volume_save.clone();
+        let vol_ref = ctx.lifecycle.volume_for_save.clone();
+        let store = ctx.lifecycle.config_store.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             let vol = vol_ref.load(Ordering::Relaxed);
@@ -249,23 +268,23 @@ pub fn handle_track_ended(ctx: &mut HandlerContext, generation: u64, error: Opti
     }
     if let Some(ref e) = error {
         tracing::warn!("YouTube track ended with error: {e}");
-        if ctx.start_brake.on_failure() {
+        if ctx.spotify.start_brake.on_failure() {
             tracing::warn!("Consecutive YouTube track failures, stopping playback");
             ctx.brake_stop();
             return;
         }
     } else {
-        ctx.start_brake.on_success();
+        ctx.spotify.start_brake.on_success();
     }
     let ended_uri = ctx.controller.state.lock().current().map(|e| e.track.uri().to_string());
     if error.is_some() {
-        let _ = ctx.radio_cmd_tx.send(BotCommand::Next {
+        let _ = ctx.channel.radio_cmd_tx.send(BotCommand::Next {
             user_id: 0,
             after_track: ended_uri,
         });
     } else {
         spawn_drained_advance(
-            ctx.radio_cmd_tx.clone(),
+            ctx.channel.radio_cmd_tx.clone(),
             ctx.controller.pipeline_drained.clone(),
             ctx.controller.pause_flag.clone(),
             ended_uri,

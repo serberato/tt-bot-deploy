@@ -260,25 +260,9 @@ Admin-only (see [Admin permissions](#admin-permissions)):
 
 Build prerequisites — **Linux:** gcc, pkg-config, libssl-dev, libclang-dev.
 **Windows:** Visual Studio Build Tools with the **Desktop development with C++**
-workload, plus CMake, Ninja, and LLVM.
+workload, plus LLVM.
 
-On Windows you must install the [Visual Studio C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
-yourself first (the script only checks for them). The helper scripts install the
-rest — Rust, CMake, Ninja, and LLVM.
-
-Linux (x86_64 and aarch64):
-
-```bash
-./scripts/setup.sh
-```
-
-Windows:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
-```
-
-Then build the binary for your platform:
+Install Rust via [rustup.rs](https://rustup.rs/), then build the binary for your platform:
 
 ```bash
 cargo build --release

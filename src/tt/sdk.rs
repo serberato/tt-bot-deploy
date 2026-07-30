@@ -60,7 +60,9 @@ pub fn migrate_sdk_dir(legacy: &Path, target: &Path) -> bool {
         }
     }
     if let Some(parent) = target.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            tracing::debug!("Failed to create parent dir {}: {e}", parent.display());
+        }
     }
     match std::fs::rename(legacy, target) {
         Ok(()) => {
