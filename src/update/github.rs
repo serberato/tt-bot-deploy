@@ -1,7 +1,7 @@
 use super::UpdateError;
 use serde_json::Value;
 
-const REPO: &str = "LuciferM242/ttspotify-rs";
+const REPO: &str = "serberato/tt-bot-deploy";
 
 #[derive(Debug, Clone)]
 pub struct UpdateInfo {

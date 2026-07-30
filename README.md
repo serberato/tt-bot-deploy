@@ -35,7 +35,7 @@ YouTube requires **cookies** to play reliably. Export them with a browser extens
 
 ## Installation
 
-Download the latest build from the [**Releases page**](https://github.com/LuciferM242/ttspotify-rs/releases).
+Download the latest build from the [**Releases page**](https://github.com/serberato/tt-bot-deploy/releases).
 
 ### Windows
 

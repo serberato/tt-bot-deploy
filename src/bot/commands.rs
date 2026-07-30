@@ -234,8 +234,14 @@ pub fn format_search_results(
 ) -> String {
     let mut msg = format!("{header}\n");
     for (i, track) in tracks.iter().enumerate() {
-        let _ = writeln!(msg, "  {}: {} [{}]",
-            i + 1, track.display_name(), track.duration_display());
+        writeln!(
+            msg,
+            "  {}: {} [{}]",
+            i + 1,
+            track.display_name(),
+            track.duration_display()
+        )
+        .expect("writing to String cannot fail");
     }
     msg.push_str(footer);
     msg
@@ -327,312 +333,48 @@ impl CommandDispatcher {
         // Volume and seek use dedicated parsers so their fiddly forms (v50,
         // sf10, and rejecting "sblah") stay unit-testable.
         if let Some(vol) = parse_volume(&cmd, args) {
-            match vol {
-                VolumeParse::Set(v) => {
-                    if v > self.max_volume as u16 {
-                        self.reply_t(client, sender_id, Key::VolumeRange, &[
-                            ("max", self.max_volume.to_string()),
-                            ("got", v.to_string()),
-                        ]);
-                    } else {
-                        let capped = (v as u8).min(self.max_volume);
-                        self.volume.store(capped, Ordering::Relaxed);
-                        self.send(BotCommand::SetVolume { percent: capped, user_id: sender_id });
-                        self.reply_t(client, sender_id, Key::VolumeSet, &[
-                            ("percent", capped.to_string()),
-                        ]);
-                    }
-                }
-                VolumeParse::Show => {
-                    let vol = self.volume.load(Ordering::Relaxed);
-                    self.reply_t(client, sender_id, Key::VolumeShow, &[
-                        ("percent", vol.to_string()),
-                        ("max", self.max_volume.to_string()),
-                    ]);
-                }
-            }
+            self.handle_volume_command(client, sender_id, vol);
             return true;
         }
         if let Some(seek) = parse_seek(&cmd, args) {
-            match seek {
-                SeekParse::Seconds(secs) => {
-                    self.send(BotCommand::Seek { offset_ms: secs * 1000, user_id: sender_id });
-                    let key = if secs >= 0 { Key::SeekForward } else { Key::SeekBackward };
-                    self.reply_t(client, sender_id, key, &[
-                        ("seconds", secs.abs().to_string()),
-                    ]);
-                }
-                SeekParse::Usage => {
-                    self.reply_t(client, sender_id, Key::SeekUsage, &[]);
-                }
-            }
+            self.handle_seek_command(client, sender_id, seek);
             return true;
         }
 
         match cmd.as_str() {
             // -- Playback --
-            "p" | "play" => {
-                if !args.is_empty() {
-                    self.send(BotCommand::SearchAndPlay {
-                        query: args.to_string(),
-                        user_id: sender_id,
-                        user_name: format!("User#{sender_id}"),
-                    });
-                    self.reply_t(client, sender_id, Key::Searching, &[]);
-                } else {
-                    let status = self.state.lock().status;
-                    match status {
-                        PlaybackStatus::Loading => {
-                            self.send(BotCommand::Pause { user_id: sender_id });
-                            self.reply_t(client, sender_id, Key::Paused, &[]);
-                        }
-                        PlaybackStatus::Paused => {
-                            self.send(BotCommand::Play { user_id: sender_id });
-                            self.reply_t(client, sender_id, Key::Resuming, &[]);
-                        }
-                        PlaybackStatus::Playing => {
-                            self.send(BotCommand::Pause { user_id: sender_id });
-                            self.reply_t(client, sender_id, Key::Paused, &[]);
-                        }
-                        PlaybackStatus::Idle => {
-                            self.reply_t(client, sender_id, Key::NothingToPlay, &[]);
-                        }
-                    }
-                }
-            }
-            "s" | "stop" => {
-                self.send(BotCommand::Stop { user_id: sender_id });
-            }
-            "n" | "next" => {
-                self.send(BotCommand::Next { user_id: sender_id, after_track: None });
-            }
-            "b" | "prev" => {
-                self.send(BotCommand::Prev { user_id: sender_id });
-            }
-            // Restart the current track from the start. Reuses Seek: a large
-            // negative offset clamps to position 0 (works for both services).
+            "p" | "play" => self.handle_play_command(client, sender_id, args),
+            "s" | "stop" => self.send(BotCommand::Stop { user_id: sender_id }),
+            "n" | "next" => self.send(BotCommand::Next { user_id: sender_id, after_track: None }),
+            "b" | "prev" => self.send(BotCommand::Prev { user_id: sender_id }),
             "replay" | "rp" => {
                 self.send(BotCommand::Replay { user_id: sender_id });
                 self.reply_t(client, sender_id, Key::RestartingTrack, &[]);
             }
-            // Spotify-only: queue the user's Liked Songs. Silently no-ops on
-            // YouTube (service-private, same convention as radio).
-            "liked" | "fav" => {
-                if self.state.lock().active_service == Service::Spotify {
-                    self.send(BotCommand::SearchAndPlay {
-                        query: "spotify:collection:liked".to_string(),
-                        user_id: sender_id,
-                        user_name: format!("User#{sender_id}"),
-                    });
-                    self.reply_t(client, sender_id, Key::LoadingLiked, &[]);
-                }
-            }
+            "liked" | "fav" => self.handle_liked_command(client, sender_id),
 
             // -- Info --
-            "c" | "current" => {
-                let state = self.state.lock();
-                if let Some(entry) = state.current() {
-                    let pos_secs = state.position_ms / 1000;
-                    let pos = format!("{}:{:02}", pos_secs / 60, pos_secs % 60);
-                    let total = state.queue.len();
-                    let idx = state.current_index.map(|i| i + 1).unwrap_or(0);
-                    let args = [
-                        ("track", entry.track.display_name()),
-                        ("index", idx.to_string()),
-                        ("total", total.to_string()),
-                        ("position", pos),
-                        ("duration", entry.track.duration_display()),
-                        ("modes", state.mode_display()),
-                    ];
-                    drop(state);
-                    self.reply_t(client, sender_id, Key::CurrentTrack, &args);
-                } else {
-                    drop(state);
-                    self.reply_t(client, sender_id, Key::NothingPlaying, &[]);
-                }
-            }
+            "c" | "current" => self.handle_current_command(client, sender_id),
 
             // -- Queue --
-            "queue" => {
-                if args.starts_with("clear") {
-                    self.send(BotCommand::QueueClear { user_id: sender_id });
-                    self.reply_t(client, sender_id, Key::QueueCleared, &[]);
-                } else if let Some(rest) = args.strip_prefix("rm") {
-                    let rest = rest.trim();
-                    if let Ok(n) = rest.parse::<usize>() {
-                        if n == 0 {
-                            self.reply_t(client, sender_id, Key::IndexStartsAtOne, &[]);
-                        } else {
-                            // Offset from current position (rm 1 = next upcoming track)
-                            let state = self.state.lock();
-                            let base = state.current_index.map(|i| i + 1).unwrap_or(0);
-                            let abs_idx = base + n - 1;
-                            if abs_idx >= state.queue.len() {
-                                drop(state);
-                                self.reply_t(client, sender_id, Key::NoTrackAtPosition, &[
-                                    ("position", n.to_string()),
-                                ]);
-                            } else {
-                                let name = state.queue[abs_idx].track.display_name();
-                                drop(state);
-                                self.send(BotCommand::QueueRemove { index: abs_idx, user_id: sender_id });
-                                self.reply_t(client, sender_id, Key::Removed, &[("name", name)]);
-                            }
-                        }
-                    } else {
-                        self.reply_t(client, sender_id, Key::QueueRmUsage, &[]);
-                    }
-                } else {
-                    let state = self.state.lock();
-                    let display = state.queue_display();
-                    drop(state);
-                    self.reply(client, sender_id, &display);
-                }
-            }
+            "queue" => self.handle_queue_command(client, sender_id, args),
 
             // -- Modes --
-            "mode" => {
-                match args.trim() {
-                    "r" | "repeat" => {
-                        self.send(BotCommand::SetMode { mode: PlaybackMode::RepeatTrack, user_id: sender_id });
-                        self.reply_t(client, sender_id, Key::ModeRepeatTrack, &[]);
-                    }
-                    "rq" | "repeat_queue" => {
-                        self.send(BotCommand::SetMode { mode: PlaybackMode::RepeatQueue, user_id: sender_id });
-                        self.reply_t(client, sender_id, Key::ModeRepeatQueue, &[]);
-                    }
-                    "s" | "shuffle" => {
-                        self.send(BotCommand::SetMode { mode: PlaybackMode::Shuffle, user_id: sender_id });
-                        self.reply_t(client, sender_id, Key::ModeShuffle, &[]);
-                    }
-                    "off" | "o" | "none" => {
-                        self.send(BotCommand::SetMode { mode: PlaybackMode::Off, user_id: sender_id });
-                        self.reply_t(client, sender_id, Key::ModeOff, &[]);
-                    }
-                    "direct" => {
-                        self.send(BotCommand::SetPlayMode { mode: crate::config::PlayMode::Direct, user_id: sender_id });
-                        self.reply(client, sender_id, "Play Mode set to: Direct (Searches will interrupt current track)");
-                    }
-                    "queue" => {
-                        self.send(BotCommand::SetPlayMode { mode: crate::config::PlayMode::Queue, user_id: sender_id });
-                        self.reply(client, sender_id, "Play Mode set to: Queue (Searches will add to queue)");
-                    }
-                    _ => {
-                        let state = self.state.lock();
-                        let display = state.mode_display();
-                        drop(state);
-                        self.reply_t(client, sender_id, Key::ModeUsage, &[("modes", display)]);
-                    }
-                }
-            }
-
-            // (volume and seek are handled before this match via parse_volume /
-            // parse_seek so their fiddly forms stay unit-testable.)
+            "mode" => self.handle_mode_command(client, sender_id, args),
 
             // -- Search --
-            "search" => {
-                if !args.is_empty() {
-                    self.send(BotCommand::SearchOnly {
-                        query: args.to_string(),
-                        user_id: sender_id,
-                    });
-                    self.reply_t(client, sender_id, Key::Searching, &[]);
-                } else {
-                    // Re-display active search results if available
-                    let header = self.i18n.tr(sender_id, Key::SearchResultsHeader, &[]);
-                    let footer = self.i18n.tr(sender_id, Key::SearchResultsFooter, &[]);
-                    let msg = self.state.lock()
-                        .get_search_results(sender_id)
-                        .map(|results| format_search_results(results, &header, &footer));
-                    match msg {
-                        Some(m) => self.reply(client, sender_id, &m),
-                        None => self.reply_t(client, sender_id, Key::SearchUsage, &[]),
-                    }
-                }
-            }
-            "pick" => {
-                let trimmed = args.trim();
-                if trimmed.is_empty() {
-                    self.reply_t(client, sender_id, Key::PickUsage, &[]);
-                } else if let Ok(n) = trimmed.parse::<usize>() {
-                    if n > 0 {
-                        self.send(BotCommand::SearchPick {
-                            user_id: sender_id,
-                            pick: n - 1,
-                            user_name: format!("User#{sender_id}"),
-                        });
-                    } else {
-                        self.reply_t(client, sender_id, Key::PickTooLow, &[]);
-                    }
-                } else {
-                    self.reply_t(client, sender_id, Key::PickUsage, &[]);
-                }
-            }
+            "search" => self.handle_search_command(client, sender_id, args),
+            "pick" => self.handle_pick_command(client, sender_id, args),
 
             // -- Radio (Spotify-only; silently ignored on other services) --
-            "radio" => {
-                if self.state.lock().active_service != Service::Spotify {
-                    return true;
-                }
-                let arg = args.trim().to_lowercase();
-                if arg.starts_with("on") {
-                    if self.state.lock().radio_enabled {
-                        self.reply_t(client, sender_id, Key::RadioAlreadyOn, &[]);
-                    } else {
-                        self.send(BotCommand::RadioToggle { enable: true, user_id: sender_id });
-                        self.reply_t(client, sender_id, Key::RadioEnabled, &[]);
-                    }
-                } else if arg.starts_with("off") {
-                    if !self.state.lock().radio_enabled {
-                        self.reply_t(client, sender_id, Key::RadioAlreadyOff, &[]);
-                    } else {
-                        self.send(BotCommand::RadioToggle { enable: false, user_id: sender_id });
-                        self.reply_t(client, sender_id, Key::RadioDisabled, &[]);
-                    }
-                } else {
-                    let key = if self.state.lock().radio_enabled {
-                        Key::RadioStatusOn
-                    } else {
-                        Key::RadioStatusOff
-                    };
-                    self.reply_t(client, sender_id, key, &[]);
-                }
-            }
+            "radio" => self.handle_radio_command(client, sender_id, args),
 
             // -- Link --
-            "link" | "url" => {
-                let url = self.state.lock().current().map(|e| e.track.web_url());
-                match url {
-                    Some(u) => self.reply(client, sender_id, &u),
-                    None => self.reply_t(client, sender_id, Key::NothingPlaying, &[]),
-                }
-            }
+            "link" | "url" => self.handle_link_command(client, sender_id),
 
             // -- Service switching --
-            "sp" | "spotify" => {
-                if self.state.lock().active_service == Service::Spotify {
-                    self.reply_t(client, sender_id, Key::AlreadyOnService, &[
-                        ("service", "Spotify".to_string()),
-                    ]);
-                } else {
-                    self.send(BotCommand::SetService { service: Service::Spotify, user_id: sender_id });
-                    self.reply_t(client, sender_id, Key::SwitchedService, &[
-                        ("service", "Spotify".to_string()),
-                    ]);
-                }
-            }
-            "yt" | "youtube" => {
-                if self.state.lock().active_service == Service::YouTube {
-                    self.reply_t(client, sender_id, Key::AlreadyOnService, &[
-                        ("service", "YouTube".to_string()),
-                    ]);
-                } else {
-                    self.send(BotCommand::SetService { service: Service::YouTube, user_id: sender_id });
-                    self.reply_t(client, sender_id, Key::SwitchedService, &[
-                        ("service", "YouTube".to_string()),
-                    ]);
-                }
-            }
+            "sp" | "spotify" => self.handle_service_command(client, sender_id, Service::Spotify),
+            "yt" | "youtube" => self.handle_service_command(client, sender_id, Service::YouTube),
 
             // -- Bot management --
             "jc" => {
@@ -673,100 +415,9 @@ impl CommandDispatcher {
             }
 
             // -- Language --
-            // The language-control surface deliberately replies in English
-            // (except the lang_set confirmation, which renders in the newly
-            // picked language): it is the recovery hatch for anyone stuck in
-            // a language they cannot read.
-            "lang" => {
-                let code = args.trim().to_lowercase();
-                if code.is_empty() {
-                    let listing = self
-                        .i18n
-                        .available()
-                        .into_iter()
-                        .map(|(code, name)| format!("  {code} - {name}"))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let current = self.i18n.lang_of(sender_id);
-                    self.reply(client, sender_id, &format!(
-                        "Available languages:\n{listing}\nYour language: {current}\n\
-                         Use: lang <code>, or lang clear to follow the server default"
-                    ));
-                } else if code == "clear" {
-                    // Remove the personal pick from the prefs list: the user
-                    // follows the server default again (and future glang changes).
-                    self.i18n.clear_pref(sender_id, username);
-                    self.reply(client, sender_id, &format!(
-                        "Language preference cleared. You now follow the server default ({})",
-                        self.i18n.default_language()
-                    ));
-                } else if self.i18n.is_available(&code) {
-                    self.i18n.set_pref(sender_id, username, &code);
-                    let name = self.i18n.language_name(&code);
-                    // Confirm in the just-picked language.
-                    let msg = self.i18n.tr_in(&code, Key::LangSet, &[("language", name)]);
-                    self.reply(client, sender_id, &msg);
-                } else {
-                    let codes = self
-                        .i18n
-                        .available()
-                        .into_iter()
-                        .map(|(code, _)| code)
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    self.reply(client, sender_id, &format!(
-                        "Unknown language: {code}. Available: {codes}"
-                    ));
-                }
-            }
-            // Admin-only (gated above via ADMIN_COMMANDS): set the server
-            // default language. Personal picks are not touched.
-            "glang" => {
-                let code = args.trim().to_lowercase();
-                if code.is_empty() {
-                    self.reply(client, sender_id, &format!(
-                        "Default language: {}\nUse: glang <code>",
-                        self.i18n.default_language()
-                    ));
-                } else if self.i18n.is_available(&code) {
-                    self.send(BotCommand::SetDefaultLanguage {
-                        code,
-                        user_id: sender_id,
-                    });
-                } else {
-                    let codes = self
-                        .i18n
-                        .available()
-                        .into_iter()
-                        .map(|(code, _)| code)
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    self.reply(client, sender_id, &format!(
-                        "Unknown language: {code}. Available: {codes}"
-                    ));
-                }
-            }
-            "stats" => {
-                let uptime = self.start_time.elapsed();
-                let hours = uptime.as_secs() / 3600;
-                let mins = (uptime.as_secs() % 3600) / 60;
-                let state = self.state.lock();
-                let tracks = state.tracks_played;
-                let queue_len = state.queue.len();
-                let vol = self.volume.load(Ordering::Relaxed);
-                drop(state);
-                let uptime_str = if hours > 0 {
-                    format!("{hours}h {mins}m")
-                } else {
-                    format!("{mins}m")
-                };
-                self.reply_t(client, sender_id, Key::Stats, &[
-                    ("uptime", uptime_str),
-                    ("tracks", tracks.to_string()),
-                    ("queue", queue_len.to_string()),
-                    ("volume", vol.to_string()),
-                ]);
-            }
+            "lang" => self.handle_lang_command(client, sender_id, username, args),
+            "glang" => self.handle_glang_command(client, sender_id, args),
+            "stats" => self.handle_stats_command(client, sender_id),
             "q" | "quit" => {
                 self.send(BotCommand::Quit { user_id: sender_id });
                 return false;
@@ -776,57 +427,542 @@ impl CommandDispatcher {
                 return false;
             }
             "h" | "help" => {
-                let active = self.state.lock().active_service;
-                let is_admin = self.is_caller_admin(client, sender_id, username);
-                if args.is_empty() {
-                    let text = help_text(active, is_admin);
-                    self.reply(client, sender_id, &text);
-                } else {
-                    let topic = args.trim().to_lowercase();
-                    // Hide gated topics from non-admins: fall to "Unknown command".
-                    if !is_admin
-                        && matches!(topic.as_str(), "q" | "quit" | "rs" | "restart" | "jc" | "glang")
-                    {
-                        self.reply(
-                            client,
-                            sender_id,
-                            "Unknown command. Type h for the command list.",
-                        );
-                        return true;
-                    }
-                    let detail: &str = match topic.as_str() {
-                        "p" | "play" => HELP_PLAY,
-                        "s" | "stop" => "s / stop\nStop playback and clear the queue.",
-                        "n" | "next" => "n / next\nSkip to the next track in the queue.\nIf radio is on and queue is empty, fetches recommendations.",
-                        "b" | "prev" => "b / prev\nGo back to the previous track in the queue.",
-                        "replay" | "rp" => "replay / rp\nRestart the current track from the beginning.",
-                        "c" | "current" => "c / current\nShow the currently playing track with position, duration, and active modes.",
-                        "queue" => HELP_QUEUE,
-                        "mode" => HELP_MODE,
-                        "v" | "volume" => HELP_VOLUME,
-                        "sf" | "sb" | "seek" => HELP_SEEK,
-                        "search" => HELP_SEARCH,
-                        "radio" if active == Service::Spotify => HELP_RADIO,
-                        "radio" => return true, // silent on non-Spotify
-                        "link" | "url" => "link / url\nGet the URL for the currently playing track.\nOpen it in the service's app or share it with others.",
-                        "stats" => "stats\nShow bot uptime, tracks played this session, queue length, and volume.",
-                        "jc" => "jc <path>\nJoin a TeamTalk channel by path.\nExample: jc /Music Room",
-                        "lang" => "lang [code]\nShow available languages, or set your own.\nYour choice is remembered by username.\nlang clear removes your choice (follow the server default).\nExample: lang de",
-                        "glang" => "glang <code>\nSet the server default language (admin).\nUsers who picked their own language with lang keep it.",
-                        "cn" => "cn <name>\nChange the bot's nickname.\nExample: cn DJ Bot",
-                        "gender" => "gender <male|female|neutral>\nSet the bot's gender (affects TT avatar).\nAliases: m, f, n, man, woman, nb",
-                        "sp" | "spotify" | "yt" | "youtube" => HELP_SERVICE,
-                        "rs" | "restart" => "rs / restart\nRestart the bot. Saves config before exit.",
-                        "q" | "quit" => "q / quit\nShut down the bot. Saves config before exit.",
-                        _ => "Unknown command. Type h for the command list.",
-                    };
-                    self.reply(client, sender_id, detail);
-                }
+                return self.handle_help_command(client, sender_id, username, args);
             }
 
             _ => {}
         }
 
+        true
+    }
+
+    fn handle_volume_command(&self, client: &Client, sender_id: i32, vol: VolumeParse) {
+        match vol {
+            VolumeParse::Set(v) => {
+                if v > self.max_volume as u16 {
+                    self.reply_t(
+                        client,
+                        sender_id,
+                        Key::VolumeRange,
+                        &[
+                            ("max", self.max_volume.to_string()),
+                            ("got", v.to_string()),
+                        ],
+                    );
+                } else {
+                    let capped = (v as u8).min(self.max_volume);
+                    self.volume.store(capped, Ordering::Relaxed);
+                    self.send(BotCommand::SetVolume {
+                        percent: capped,
+                        user_id: sender_id,
+                    });
+                    self.reply_t(
+                        client,
+                        sender_id,
+                        Key::VolumeSet,
+                        &[("percent", capped.to_string())],
+                    );
+                }
+            }
+            VolumeParse::Show => {
+                let vol = self.volume.load(Ordering::Relaxed);
+                self.reply_t(
+                    client,
+                    sender_id,
+                    Key::VolumeShow,
+                    &[
+                        ("percent", vol.to_string()),
+                        ("max", self.max_volume.to_string()),
+                    ],
+                );
+            }
+        }
+    }
+
+    fn handle_seek_command(&self, client: &Client, sender_id: i32, seek: SeekParse) {
+        match seek {
+            SeekParse::Seconds(secs) => {
+                self.send(BotCommand::Seek {
+                    offset_ms: secs * 1000,
+                    user_id: sender_id,
+                });
+                let key = if secs >= 0 {
+                    Key::SeekForward
+                } else {
+                    Key::SeekBackward
+                };
+                self.reply_t(
+                    client,
+                    sender_id,
+                    key,
+                    &[("seconds", secs.abs().to_string())],
+                );
+            }
+            SeekParse::Usage => {
+                self.reply_t(client, sender_id, Key::SeekUsage, &[]);
+            }
+        }
+    }
+
+    fn handle_play_command(&self, client: &Client, sender_id: i32, args: &str) {
+        if !args.is_empty() {
+            self.send(BotCommand::SearchAndPlay {
+                query: args.to_string(),
+                user_id: sender_id,
+                user_name: format!("User#{sender_id}"),
+            });
+            self.reply_t(client, sender_id, Key::Searching, &[]);
+        } else {
+            let status = self.state.lock().status;
+            match status {
+                PlaybackStatus::Loading | PlaybackStatus::Playing => {
+                    self.send(BotCommand::Pause { user_id: sender_id });
+                    self.reply_t(client, sender_id, Key::Paused, &[]);
+                }
+                PlaybackStatus::Paused => {
+                    self.send(BotCommand::Play { user_id: sender_id });
+                    self.reply_t(client, sender_id, Key::Resuming, &[]);
+                }
+                PlaybackStatus::Idle => {
+                    self.reply_t(client, sender_id, Key::NothingToPlay, &[]);
+                }
+            }
+        }
+    }
+
+    fn handle_liked_command(&self, client: &Client, sender_id: i32) {
+        if self.state.lock().active_service == Service::Spotify {
+            self.send(BotCommand::SearchAndPlay {
+                query: "spotify:collection:liked".to_string(),
+                user_id: sender_id,
+                user_name: format!("User#{sender_id}"),
+            });
+            self.reply_t(client, sender_id, Key::LoadingLiked, &[]);
+        }
+    }
+
+    fn handle_current_command(&self, client: &Client, sender_id: i32) {
+        let state = self.state.lock();
+        if let Some(entry) = state.current() {
+            let pos_secs = state.position_ms / 1000;
+            let pos = format!("{}:{:02}", pos_secs / 60, pos_secs % 60);
+            let total = state.queue.len();
+            let idx = state.current_index.map(|i| i + 1).unwrap_or(0);
+            let args = [
+                ("track", entry.track.display_name()),
+                ("index", idx.to_string()),
+                ("total", total.to_string()),
+                ("position", pos),
+                ("duration", entry.track.duration_display()),
+                ("modes", state.mode_display()),
+            ];
+            drop(state);
+            self.reply_t(client, sender_id, Key::CurrentTrack, &args);
+        } else {
+            drop(state);
+            self.reply_t(client, sender_id, Key::NothingPlaying, &[]);
+        }
+    }
+
+    fn handle_queue_command(&self, client: &Client, sender_id: i32, args: &str) {
+        if args.starts_with("clear") {
+            self.send(BotCommand::QueueClear { user_id: sender_id });
+            self.reply_t(client, sender_id, Key::QueueCleared, &[]);
+        } else if let Some(rest) = args.strip_prefix("rm") {
+            let rest = rest.trim();
+            if let Ok(n) = rest.parse::<usize>() {
+                if n == 0 {
+                    self.reply_t(client, sender_id, Key::IndexStartsAtOne, &[]);
+                } else {
+                    let state = self.state.lock();
+                    let base = state.current_index.map(|i| i + 1).unwrap_or(0);
+                    let abs_idx = base + n - 1;
+                    if abs_idx >= state.queue.len() {
+                        drop(state);
+                        self.reply_t(
+                            client,
+                            sender_id,
+                            Key::NoTrackAtPosition,
+                            &[("position", n.to_string())],
+                        );
+                    } else {
+                        let name = state.queue[abs_idx].track.display_name();
+                        drop(state);
+                        self.send(BotCommand::QueueRemove {
+                            index: abs_idx,
+                            user_id: sender_id,
+                        });
+                        self.reply_t(client, sender_id, Key::Removed, &[("name", name)]);
+                    }
+                }
+            } else {
+                self.reply_t(client, sender_id, Key::QueueRmUsage, &[]);
+            }
+        } else {
+            let state = self.state.lock();
+            let display = state.queue_display();
+            drop(state);
+            self.reply(client, sender_id, &display);
+        }
+    }
+
+    fn handle_mode_command(&self, client: &Client, sender_id: i32, args: &str) {
+        match args.trim() {
+            "r" | "repeat" => {
+                self.send(BotCommand::SetMode {
+                    mode: PlaybackMode::RepeatTrack,
+                    user_id: sender_id,
+                });
+                self.reply_t(client, sender_id, Key::ModeRepeatTrack, &[]);
+            }
+            "rq" | "repeat_queue" => {
+                self.send(BotCommand::SetMode {
+                    mode: PlaybackMode::RepeatQueue,
+                    user_id: sender_id,
+                });
+                self.reply_t(client, sender_id, Key::ModeRepeatQueue, &[]);
+            }
+            "s" | "shuffle" => {
+                self.send(BotCommand::SetMode {
+                    mode: PlaybackMode::Shuffle,
+                    user_id: sender_id,
+                });
+                self.reply_t(client, sender_id, Key::ModeShuffle, &[]);
+            }
+            "off" | "o" | "none" => {
+                self.send(BotCommand::SetMode {
+                    mode: PlaybackMode::Off,
+                    user_id: sender_id,
+                });
+                self.reply_t(client, sender_id, Key::ModeOff, &[]);
+            }
+            "direct" => {
+                self.send(BotCommand::SetPlayMode {
+                    mode: crate::config::PlayMode::Direct,
+                    user_id: sender_id,
+                });
+                self.reply(
+                    client,
+                    sender_id,
+                    "Play Mode set to: Direct (Searches will interrupt current track)",
+                );
+            }
+            "queue" => {
+                self.send(BotCommand::SetPlayMode {
+                    mode: crate::config::PlayMode::Queue,
+                    user_id: sender_id,
+                });
+                self.reply(
+                    client,
+                    sender_id,
+                    "Play Mode set to: Queue (Searches will add to queue)",
+                );
+            }
+            _ => {
+                let state = self.state.lock();
+                let display = state.mode_display();
+                drop(state);
+                self.reply_t(client, sender_id, Key::ModeUsage, &[("modes", display)]);
+            }
+        }
+    }
+
+    fn handle_search_command(&self, client: &Client, sender_id: i32, args: &str) {
+        if !args.is_empty() {
+            self.send(BotCommand::SearchOnly {
+                query: args.to_string(),
+                user_id: sender_id,
+            });
+            self.reply_t(client, sender_id, Key::Searching, &[]);
+        } else {
+            let header = self.i18n.tr(sender_id, Key::SearchResultsHeader, &[]);
+            let footer = self.i18n.tr(sender_id, Key::SearchResultsFooter, &[]);
+            let msg = self
+                .state
+                .lock()
+                .get_search_results(sender_id)
+                .map(|results| format_search_results(results, &header, &footer));
+            match msg {
+                Some(m) => self.reply(client, sender_id, &m),
+                None => self.reply_t(client, sender_id, Key::SearchUsage, &[]),
+            }
+        }
+    }
+
+    fn handle_pick_command(&self, client: &Client, sender_id: i32, args: &str) {
+        let trimmed = args.trim();
+        if trimmed.is_empty() {
+            self.reply_t(client, sender_id, Key::PickUsage, &[]);
+        } else if let Ok(n) = trimmed.parse::<usize>() {
+            if n > 0 {
+                self.send(BotCommand::SearchPick {
+                    user_id: sender_id,
+                    pick: n - 1,
+                    user_name: format!("User#{sender_id}"),
+                });
+            } else {
+                self.reply_t(client, sender_id, Key::PickTooLow, &[]);
+            }
+        } else {
+            self.reply_t(client, sender_id, Key::PickUsage, &[]);
+        }
+    }
+
+    fn handle_radio_command(&self, client: &Client, sender_id: i32, args: &str) {
+        if self.state.lock().active_service != Service::Spotify {
+            return;
+        }
+        let arg = args.trim().to_lowercase();
+        if arg.starts_with("on") {
+            if self.state.lock().radio_enabled {
+                self.reply_t(client, sender_id, Key::RadioAlreadyOn, &[]);
+            } else {
+                self.send(BotCommand::RadioToggle {
+                    enable: true,
+                    user_id: sender_id,
+                });
+                self.reply_t(client, sender_id, Key::RadioEnabled, &[]);
+            }
+        } else if arg.starts_with("off") {
+            if !self.state.lock().radio_enabled {
+                self.reply_t(client, sender_id, Key::RadioAlreadyOff, &[]);
+            } else {
+                self.send(BotCommand::RadioToggle {
+                    enable: false,
+                    user_id: sender_id,
+                });
+                self.reply_t(client, sender_id, Key::RadioDisabled, &[]);
+            }
+        } else {
+            let key = if self.state.lock().radio_enabled {
+                Key::RadioStatusOn
+            } else {
+                Key::RadioStatusOff
+            };
+            self.reply_t(client, sender_id, key, &[]);
+        }
+    }
+
+    fn handle_link_command(&self, client: &Client, sender_id: i32) {
+        let url = self.state.lock().current().map(|e| e.track.web_url());
+        match url {
+            Some(u) => self.reply(client, sender_id, &u),
+            None => self.reply_t(client, sender_id, Key::NothingPlaying, &[]),
+        }
+    }
+
+    fn handle_service_command(&self, client: &Client, sender_id: i32, service: Service) {
+        if self.state.lock().active_service == service {
+            self.reply_t(
+                client,
+                sender_id,
+                Key::AlreadyOnService,
+                &[("service", service.name().to_string())],
+            );
+        } else {
+            self.send(BotCommand::SetService {
+                service,
+                user_id: sender_id,
+            });
+            self.reply_t(
+                client,
+                sender_id,
+                Key::SwitchedService,
+                &[("service", service.name().to_string())],
+            );
+        }
+    }
+
+    fn available_language_listing(&self) -> String {
+        self.i18n
+            .available()
+            .into_iter()
+            .map(|(code, name)| format!("  {code} - {name}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn available_language_codes(&self) -> String {
+        self.i18n
+            .available()
+            .into_iter()
+            .map(|(code, _)| code)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    fn handle_lang_command(
+        &self,
+        client: &Client,
+        sender_id: i32,
+        username: &str,
+        args: &str,
+    ) {
+        let code = args.trim().to_lowercase();
+        if code.is_empty() {
+            let listing = self.available_language_listing();
+            let current = self.i18n.lang_of(sender_id);
+            self.reply(
+                client,
+                sender_id,
+                &format!(
+                    "Available languages:\n{listing}\nYour language: {current}\n\
+                     Use: lang <code>, or lang clear to follow the server default"
+                ),
+            );
+        } else if code == "clear" {
+            self.i18n.clear_pref(sender_id, username);
+            self.reply(
+                client,
+                sender_id,
+                &format!(
+                    "Language preference cleared. You now follow the server default ({})",
+                    self.i18n.default_language()
+                ),
+            );
+        } else if self.i18n.is_available(&code) {
+            self.i18n.set_pref(sender_id, username, &code);
+            let name = self.i18n.language_name(&code);
+            let msg = self.i18n.tr_in(&code, Key::LangSet, &[("language", name)]);
+            self.reply(client, sender_id, &msg);
+        } else {
+            let codes = self.available_language_codes();
+            self.reply(
+                client,
+                sender_id,
+                &format!("Unknown language: {code}. Available: {codes}"),
+            );
+        }
+    }
+
+    fn handle_glang_command(&self, client: &Client, sender_id: i32, args: &str) {
+        let code = args.trim().to_lowercase();
+        if code.is_empty() {
+            self.reply(
+                client,
+                sender_id,
+                &format!(
+                    "Default language: {}\nUse: glang <code>",
+                    self.i18n.default_language()
+                ),
+            );
+        } else if self.i18n.is_available(&code) {
+            self.send(BotCommand::SetDefaultLanguage {
+                code,
+                user_id: sender_id,
+            });
+        } else {
+            let codes = self.available_language_codes();
+            self.reply(
+                client,
+                sender_id,
+                &format!("Unknown language: {code}. Available: {codes}"),
+            );
+        }
+    }
+
+    fn handle_stats_command(&self, client: &Client, sender_id: i32) {
+        let uptime = self.start_time.elapsed();
+        let hours = uptime.as_secs() / 3600;
+        let mins = (uptime.as_secs() % 3600) / 60;
+        let state = self.state.lock();
+        let tracks = state.tracks_played;
+        let queue_len = state.queue.len();
+        let vol = self.volume.load(Ordering::Relaxed);
+        drop(state);
+        let uptime_str = if hours > 0 {
+            format!("{hours}h {mins}m")
+        } else {
+            format!("{mins}m")
+        };
+        self.reply_t(
+            client,
+            sender_id,
+            Key::Stats,
+            &[
+                ("uptime", uptime_str),
+                ("tracks", tracks.to_string()),
+                ("queue", queue_len.to_string()),
+                ("volume", vol.to_string()),
+            ],
+        );
+    }
+
+    fn handle_help_command(
+        &self,
+        client: &Client,
+        sender_id: i32,
+        username: &str,
+        args: &str,
+    ) -> bool {
+        let active = self.state.lock().active_service;
+        let is_admin = self.is_caller_admin(client, sender_id, username);
+        if args.is_empty() {
+            let text = help_text(active, is_admin);
+            self.reply(client, sender_id, &text);
+        } else {
+            let topic = args.trim().to_lowercase();
+            if !is_admin
+                && matches!(
+                    topic.as_str(),
+                    "q" | "quit" | "rs" | "restart" | "jc" | "glang"
+                )
+            {
+                self.reply(
+                    client,
+                    sender_id,
+                    "Unknown command. Type h for the command list.",
+                );
+                return true;
+            }
+            let detail: &str = match topic.as_str() {
+                "p" | "play" => HELP_PLAY,
+                "s" | "stop" => "s / stop\nStop playback and clear the queue.",
+                "n" | "next" => {
+                    "n / next\nSkip to the next track in the queue.\nIf radio is on and queue is empty, fetches recommendations."
+                }
+                "b" | "prev" => "b / prev\nGo back to the previous track in the queue.",
+                "replay" | "rp" => {
+                    "replay / rp\nRestart the current track from the beginning."
+                }
+                "c" | "current" => {
+                    "c / current\nShow the currently playing track with position, duration, and active modes."
+                }
+                "queue" => HELP_QUEUE,
+                "mode" => HELP_MODE,
+                "v" | "volume" => HELP_VOLUME,
+                "sf" | "sb" | "seek" => HELP_SEEK,
+                "search" => HELP_SEARCH,
+                "radio" if active == Service::Spotify => HELP_RADIO,
+                "radio" => return true,
+                "link" | "url" => {
+                    "link / url\nGet the URL for the currently playing track.\nOpen it in the service's app or share it with others."
+                }
+                "stats" => {
+                    "stats\nShow bot uptime, tracks played this session, queue length, and volume."
+                }
+                "jc" => {
+                    "jc <path>\nJoin a TeamTalk channel by path.\nExample: jc /Music Room"
+                }
+                "lang" => {
+                    "lang [code]\nShow available languages, or set your own.\nYour choice is remembered by username.\nlang clear removes your choice (follow the server default).\nExample: lang de"
+                }
+                "glang" => {
+                    "glang <code>\nSet the server default language (admin).\nUsers who picked their own language with lang keep it."
+                }
+                "cn" => "cn <name>\nChange the bot's nickname.\nExample: cn DJ Bot",
+                "gender" => {
+                    "gender <male|female|neutral>\nSet the bot's gender (affects TT avatar).\nAliases: m, f, n, man, woman, nb"
+                }
+                "sp" | "spotify" | "yt" | "youtube" => HELP_SERVICE,
+                "rs" | "restart" => {
+                    "rs / restart\nRestart the bot. Saves config before exit."
+                }
+                "q" | "quit" => "q / quit\nShut down the bot. Saves config before exit.",
+                _ => "Unknown command. Type h for the command list.",
+            };
+            self.reply(client, sender_id, detail);
+        }
         true
     }
 }
