@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod bot;
 pub mod config;
+pub mod domain;
 pub mod error;
 pub mod i18n;
 pub mod logging;
