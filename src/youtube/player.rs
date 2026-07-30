@@ -62,6 +62,7 @@ struct TrackControl {
     seek_to_ms: AtomicU32,
 }
 
+#[derive(Clone)]
 pub struct YouTubePlayer {
     audio_tx: Sender<Vec<i16>>,
     metadata: Arc<YouTubeMetadata>,
