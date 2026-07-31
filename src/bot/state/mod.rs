@@ -87,6 +87,10 @@ impl PlayerState {
     pub fn current(&self) -> Option<&QueueEntry> {
         self.current_index.and_then(|i| self.queue.get(i))
     }
+
+    pub fn is_idle_or_no_track(&self) -> bool {
+        self.status == PlaybackStatus::Idle || self.current().is_none()
+    }
 }
 
 #[cfg(test)]

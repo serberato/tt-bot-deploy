@@ -31,6 +31,8 @@ pub struct Controller {
     pub timing_reset: Arc<AtomicBool>,
     pub pipeline_drained: Arc<AtomicBool>,
     pub config_store: Arc<ConfigStore>,
+    pub spotify_brake: Arc<parking_lot::Mutex<StartFailureBrake>>,
+    pub youtube_brake: Arc<parking_lot::Mutex<StartFailureBrake>>,
 }
 
 impl Controller {
@@ -45,6 +47,8 @@ impl Controller {
         timing_reset: Arc<AtomicBool>,
         pipeline_drained: Arc<AtomicBool>,
         config_store: Arc<ConfigStore>,
+        spotify_brake: Arc<parking_lot::Mutex<StartFailureBrake>>,
+        youtube_brake: Arc<parking_lot::Mutex<StartFailureBrake>>,
     ) -> Self {
         Self {
             player,
@@ -56,12 +60,16 @@ impl Controller {
             timing_reset,
             pipeline_drained,
             config_store,
+            spotify_brake,
+            youtube_brake,
         }
     }
 
     /// Stops playback on both engines, flushes injected audio, disables voice transmission,
     /// resets audio timing, and sets status to `PlaybackStatus::Idle`.
     pub fn stop_playback(&self) {
+        self.spotify_brake.lock().on_success();
+        self.youtube_brake.lock().on_success();
         self.pause_flag.store(false, Ordering::Relaxed);
         self.player.stop();
         self.youtube_player.stop();

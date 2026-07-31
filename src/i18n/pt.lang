@@ -26,9 +26,11 @@ search_cancelled = Busca cancelada
 volume_set = Volume: {percent}%
 volume_show = Volume: {percent}% (máx: {max})
 volume_range = O volume deve ser 0-{max}. Recebido: {got}
+current_volume = Volume atual: {volume}%
 seek_forward = Avançando {seconds}s
 seek_backward = Voltando {seconds}s
 seek_usage = Uso: sf [segundos] / sb [segundos]
+seek_exceeds_timeline = O valor inserido excede a linha do tempo
 
 # Fila
 
@@ -37,6 +39,7 @@ index_starts_at_one = A posição começa em 1
 no_track_at_position = Nenhuma faixa na posição {position}
 removed = Removido: {name}
 queue_rm_usage = Uso: queue rm <número>
+no_more_items_in_queue = Sem faixas adicionais na fila
 
 # Modos
 
@@ -96,3 +99,4 @@ end_of_queue = Fim da fila
 invalid_pick = Escolha inválida ou sem resultados de busca
 channel_not_found = Canal não encontrado: {path}
 failed_to_start = Falha ao iniciar a faixa: {track}
+rate_limit_cooldown = O disjuntor do {service} foi ativado após falhas seguidas. Aguardando resfriamento.

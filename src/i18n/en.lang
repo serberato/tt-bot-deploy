@@ -56,6 +56,7 @@ volume_show = Volume: {percent}% (max: {max})
 
 # Shown when a requested volume is above the allowed maximum. {max} = maximum, {got} = what they asked for.
 volume_range = Volume must be 0-{max}. Got: {got}
+current_volume = Current volume: {volume}%
 
 # Shown when seeking forwards. {seconds} = how far.
 seek_forward = Seeking forward {seconds}s
@@ -65,11 +66,13 @@ seek_backward = Seeking backward {seconds}s
 
 # Shown when the seek command is used incorrectly.
 seek_usage = Usage: sf [seconds] / sb [seconds]
+seek_exceeds_timeline = The entered value exceeds the timeline
 
 # Queue
 
 # Shown when the queue is cleared.
 queue_cleared = Queue cleared
+no_more_items_in_queue = No additional tracks in queue
 
 # Shown when queue rm is given position 0 (positions start at 1).
 index_starts_at_one = Index starts at 1
@@ -222,4 +225,5 @@ channel_not_found = Channel not found: {path}
 
 # Shown when a track could not be started. {track} = the track title.
 failed_to_start = Failed to start track: {track}
+rate_limit_cooldown = Circuit breaker tripped for {service} after repeated failures. Waiting for cooldown.
 start_of_queue = Start of queue

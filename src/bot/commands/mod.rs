@@ -66,6 +66,17 @@ pub enum BotCommand {
     /// skipped/stopped) is dropped instead of double-advancing the queue.
     /// `error` carries a short failure reason when playback did not end cleanly.
     TrackEnded { generation: u64, error: Option<String> },
+    /// Internal: debounced stream start after queue change (coalescing rapid clicks)
+    StartSettledTrack {
+        service: Service,
+        uri: String,
+        user_id: i32,
+        name: String,
+    },
+    /// Internal: circuit breaker tripped after 3 consecutive failures
+    CircuitBreakerTrip {
+        service: Service,
+    },
 }
 
 #[derive(Debug)]

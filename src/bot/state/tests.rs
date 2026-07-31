@@ -272,8 +272,8 @@ fn go_prev_walks_backward() {
 fn go_prev_at_zero_without_repeat_stays_at_zero() {
     let mut state = PlayerState::new();
     fill(&mut state, 3);
-    // current_index already 0 from enqueue
-    assert_eq!(state.go_prev().unwrap().track.id(), "0");
+    // current_index already 0 from enqueue; Rule 4: go_prev returns None without repeat
+    assert!(state.go_prev().is_none());
     assert_eq!(state.current_index, Some(0));
 }
 
@@ -451,4 +451,24 @@ fn current_returns_indexed_entry() {
     fill(&mut state, 3);
     state.current_index = Some(2);
     assert_eq!(state.current().unwrap().track.id(), "2");
+}
+
+#[test]
+fn test_is_idle_or_no_track() {
+    let mut state = PlayerState::new();
+    assert!(state.is_idle_or_no_track());
+    fill(&mut state, 1);
+    state.status = PlaybackStatus::Playing;
+    assert!(!state.is_idle_or_no_track());
+    state.status = PlaybackStatus::Idle;
+    assert!(state.is_idle_or_no_track());
+}
+
+#[test]
+fn go_prev_at_index_0_no_repeat_returns_none() {
+    let mut state = PlayerState::new();
+    fill(&mut state, 3);
+    state.current_index = Some(0);
+    assert!(state.go_prev().is_none());
+    assert_eq!(state.current_index, Some(0));
 }

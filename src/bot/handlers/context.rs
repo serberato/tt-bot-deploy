@@ -14,7 +14,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::bot::announcer::Announcer;
 use crate::spotify::auth::SpotifyAuth;
 use crate::bot::commands::BotCommand;
-use crate::bot::controller::{Controller, StartFailureBrake};
+use crate::bot::controller::Controller;
 use crate::bot::runner::BotExit;
 use crate::config::ConfigStore;
 use crate::error::BotError;
@@ -38,7 +38,6 @@ pub struct SpotifyCtx {
     pub connected: bool,
     pub recovery_notify: Arc<tokio::sync::Notify>,
     pub recovery_suspended: Arc<AtomicBool>,
-    pub start_brake: StartFailureBrake,
 }
 
 /// Channel and radio streaming parameters and prefetch handles.
@@ -48,6 +47,7 @@ pub struct ChannelCtx {
     pub radio_delay: f32,
     pub radio_cmd_tx: UnboundedSender<BotCommand>,
     pub radio_prefetch_slot: Arc<parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    pub debounce_slot: Arc<parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 /// Shared configuration store, volume persistence, and shutdown signaling.
@@ -110,6 +110,30 @@ impl HandlerContext {
         }
     }
 
+    /// Debounces stream initialization by 350ms to coalesce rapid commands (`n` / `b`).
+    pub fn schedule_start_track(
+        &self,
+        service: Service,
+        uri_str: String,
+        user_id: i32,
+        name: String,
+    ) {
+        let mut guard = self.channel.debounce_slot.lock();
+        if let Some(handle) = guard.take() {
+            handle.abort();
+        }
+        let tx = self.channel.radio_cmd_tx.clone();
+        *guard = Some(tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+            let _ = tx.send(BotCommand::StartSettledTrack {
+                service,
+                uri: uri_str,
+                user_id,
+                name,
+            });
+        }));
+    }
+
     /// Attempts to start a track; on failure, notifies user and auto-skips or trips brake.
     pub fn start_or_skip(
         &mut self,
@@ -119,18 +143,28 @@ impl HandlerContext {
         track_name: &str,
     ) -> bool {
         if self.client.controller.start_track(service, uri_str) {
-            if service == Service::Spotify {
-                self.spotify.start_brake.on_success();
-            }
             true
         } else {
             self.reply_t(user_id, Key::FailedToStart, &[("track", track_name.to_string())]);
-            if self.spotify.start_brake.on_failure() {
-                self.brake_stop();
+            let mut guard = match service {
+                Service::Spotify => self.client.controller.spotify_brake.lock(),
+                Service::YouTube => self.client.controller.youtube_brake.lock(),
+            };
+            if guard.on_failure() {
+                drop(guard);
+                self.reply_t(user_id, Key::RateLimitCooldown, &[("service", format!("{service:?}"))]);
+                crate::bot::handlers::playback::handle_circuit_breaker_trip(self, service);
             } else {
-                let _ = self.channel.radio_cmd_tx.send(BotCommand::Next {
-                    user_id: 0,
-                    after_track: Some(uri_str.to_string()),
+                let delay = guard.backoff_duration();
+                drop(guard);
+                let tx = self.channel.radio_cmd_tx.clone();
+                let after_uri = Some(uri_str.to_string());
+                tokio::spawn(async move {
+                    tokio::time::sleep(delay).await;
+                    let _ = tx.send(BotCommand::Next {
+                        user_id: 0,
+                        after_track: after_uri,
+                    });
                 });
             }
             false

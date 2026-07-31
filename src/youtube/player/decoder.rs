@@ -16,7 +16,7 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use symphonia::core::units::Time;
 
-use crate::bot::state::SharedState;
+use crate::bot::state::{PlaybackStatus, SharedState};
 use crate::youtube::player::interleave::{flush_remaining, interleave_to_i16};
 use crate::youtube::player::TrackControl;
 
@@ -240,7 +240,13 @@ fn resample_and_send_chunks(
 
         let pos = (base_ms + pipeline_pos_ms.load(Ordering::Relaxed) as u64).min(u32::MAX as u64) as u32;
         ctrl.position_ms.store(pos, Ordering::Relaxed);
-        state.lock().position_ms = pos;
+        {
+            let mut s = state.lock();
+            s.position_ms = pos;
+            if s.status == PlaybackStatus::Loading {
+                s.status = PlaybackStatus::Playing;
+            }
+        }
     }
     Ok(())
 }

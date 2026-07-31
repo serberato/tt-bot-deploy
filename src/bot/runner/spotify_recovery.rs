@@ -14,6 +14,7 @@ use crate::spotify::recovery::{
 
 /// Everything the session-recovery supervisor needs to rebuild a dead Spotify
 /// session and resume playback. All fields are cheap handles/clones.
+#[derive(Clone)]
 pub(crate) struct SpotifyRecovery {
     pub session_holder: Arc<parking_lot::Mutex<librespot_core::session::Session>>,
     pub auth: Arc<crate::spotify::auth::SpotifyAuth>,
@@ -29,6 +30,7 @@ pub(crate) struct SpotifyRecovery {
     pub local_shutdown: Arc<AtomicBool>,
     pub event_tx: Option<crossbeam_channel::Sender<RunnerEvent>>,
     pub pipeline_drained: Arc<AtomicBool>,
+    pub spotify_brake: Arc<parking_lot::Mutex<crate::bot::controller::StartFailureBrake>>,
 }
 
 /// Build a brand-new Spotify session (cached credentials only — never opens a
@@ -97,9 +99,10 @@ pub(crate) async fn recover_spotify(rec: &SpotifyRecovery) -> RecoveryOutcome {
                 let notify = rec.recovery_notify.clone();
                 let drained = rec.pipeline_drained.clone();
                 let paused = rec.pause_flag.clone();
+                let brake = rec.spotify_brake.clone();
                 tokio::spawn(async move {
                     crate::bot::runner::player_loop::player_event_loop(
-                        event_rx, st, tx, sh, notify, drained, paused,
+                        event_rx, st, tx, sh, notify, drained, paused, brake,
                     )
                     .await;
                 });

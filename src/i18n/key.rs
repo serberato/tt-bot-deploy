@@ -50,15 +50,18 @@ keys! {
     VolumeSet => "volume_set",
     VolumeShow => "volume_show",
     VolumeRange => "volume_range",
+    CurrentVolume => "current_volume",
     SeekForward => "seek_forward",
     SeekBackward => "seek_backward",
     SeekUsage => "seek_usage",
+    SeekExceedsTimeline => "seek_exceeds_timeline",
     // Queue
     QueueCleared => "queue_cleared",
     IndexStartsAtOne => "index_starts_at_one",
     NoTrackAtPosition => "no_track_at_position",
     Removed => "removed",
     QueueRmUsage => "queue_rm_usage",
+    NoMoreItemsInQueue => "no_more_items_in_queue",
     // Modes
     ModeRepeatTrack => "mode_repeat_track",
     ModeRepeatQueue => "mode_repeat_queue",
@@ -107,6 +110,7 @@ keys! {
     InvalidPick => "invalid_pick",
     ChannelNotFound => "channel_not_found",
     FailedToStart => "failed_to_start",
+    RateLimitCooldown => "rate_limit_cooldown",
 }
 
 /// Parse `.lang` file text into a key -> template map.

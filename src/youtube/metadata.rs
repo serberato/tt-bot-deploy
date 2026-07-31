@@ -208,25 +208,48 @@ impl YouTubeMetadata {
         }
     }
 
-    /// Search YouTube Music for tracks matching the query.
-    /// Returns up to `limit` results (sliced from the first page).
+    /// Search YouTube Music and YouTube videos with query sanitization, multi-tier fallback, and scoring ranking.
     pub async fn search_tracks(&self, query: &str, limit: u8) -> Result<Vec<YouTubeTrack>, BotError> {
-        let result = self.client.query()
-            .music_search_tracks(query)
-            .await
-            .map_err(|e| BotError::Playback(format!("YouTube search failed: {e}")))?;
+        let sanitized = sanitize_query(query);
+        let query_lower = sanitized.to_lowercase();
+        let limit_usize = limit as usize;
 
-        let tracks: Vec<YouTubeTrack> = result.items.items
-            .into_iter()
-            .take(limit as usize)
-            .map(track_item_to_track)
-            .collect();
+        let force_video_fallback = has_non_catalogue_keywords(&query_lower);
+
+        let mut tracks = Vec::new();
+
+        // Tier 1: Try YouTube Music tracks if not forced to video search
+        if !force_video_fallback {
+            if let Ok(result) = self.client.query().music_search_tracks(&sanitized).await {
+                tracks = result.items.items
+                    .into_iter()
+                    .map(track_item_to_track)
+                    .collect();
+            }
+        }
+
+        // Tier 2: If Tier 1 returned 0 results or force_video_fallback is true, search YouTube videos
+        if tracks.is_empty() {
+            let result = self.client.query()
+                .search::<rustypipe::model::VideoItem, _>(&sanitized)
+                .await
+                .map_err(|e| BotError::Playback(format!("YouTube search failed: {e}")))?;
+
+            tracks = result.items.items
+                .into_iter()
+                .map(video_item_to_track)
+                .collect();
+        }
 
         if tracks.is_empty() {
-            Err(BotError::NoResults)
-        } else {
-            Ok(tracks)
+            return Err(BotError::NoResults);
         }
+
+        // Tier 3: Rank and sort candidates by weighted score DESC
+        tracks.sort_by_cached_key(|track| -score_track(&query_lower, track));
+        tracks.truncate(limit_usize);
+
+        Ok(tracks)
     }
 
     /// Spawn yt-dlp as a child process that streams M4A audio bytes to its
@@ -317,12 +340,83 @@ impl MetadataProvider for YouTubeMetadata {
     }
 }
 
+/// Strip Unicode emojis, typographic quotes, and punctuation that break tokenization.
+pub fn sanitize_query(query: &str) -> String {
+    let mut cleaned = String::with_capacity(query.len());
+    for c in query.chars() {
+        match c {
+            '|' | '[' | ']' | '{' | '}' | '“' | '”' | '‘' | '’' | '"' | '\'' => {
+                cleaned.push(' ');
+            }
+            c if c.is_alphanumeric() || c.is_whitespace() || c.is_ascii_punctuation() => {
+                cleaned.push(c);
+            }
+            _ => {
+                if c.is_alphabetic() {
+                    cleaned.push(c);
+                } else {
+                    cleaned.push(' ');
+                }
+            }
+        }
+    }
+    cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn has_non_catalogue_keywords(query_lower: &str) -> bool {
+    const KEYWORDS: &[&str] = &[
+        "live", "desfile", "detenido", "circo", "tiny desk", "noticias",
+        "entrevista", "parada", "militar", "vlog", "podcast", "npr",
+    ];
+    KEYWORDS.iter().any(|&kw| query_lower.contains(kw))
+}
+
+fn score_track(query_lower: &str, track: &YouTubeTrack) -> i32 {
+    let mut score = 0i32;
+    let name_lower = track.name.to_lowercase();
+    let artist_lower = track.artists.join(" ").to_lowercase();
+    let target = format!("{} {}", name_lower, artist_lower);
+
+    for token in query_lower.split_whitespace() {
+        if target.contains(token) {
+            score += 15;
+        }
+    }
+
+    let dur_secs = track.duration_ms / 1000;
+    if (60..=720).contains(&dur_secs) {
+        score += 20;
+    } else if dur_secs < 15 || dur_secs > 7200 {
+        score -= 20;
+    }
+
+    const PENALTIES: &[&str] = &["karaoke", "cover", "reaction", "8d"];
+    for &pen in PENALTIES {
+        if target.contains(pen) && !query_lower.contains(pen) {
+            score -= 40;
+        }
+    }
+
+    score
+}
+
 fn track_item_to_track(item: rustypipe::model::TrackItem) -> YouTubeTrack {
     YouTubeTrack {
         id: item.id,
         name: item.name,
         artists: item.artists.into_iter().map(|a| a.name).collect(),
         album: item.album.map(|a| a.name).unwrap_or_default(),
+        duration_ms: item.duration.unwrap_or(0).saturating_mul(1000),
+    }
+}
+
+fn video_item_to_track(item: rustypipe::model::VideoItem) -> YouTubeTrack {
+    let artist = item.channel.map(|c| c.name).unwrap_or_else(|| "YouTube".to_string());
+    YouTubeTrack {
+        id: item.id,
+        name: item.name,
+        artists: vec![artist],
+        album: "YouTube Video".to_string(),
         duration_ms: item.duration.unwrap_or(0).saturating_mul(1000),
     }
 }
@@ -335,5 +429,45 @@ mod tests {
     fn youtube_metadata_implements_metadata_provider() {
         fn assert_provider<T: crate::domain::MetadataProvider>() {}
         assert_provider::<YouTubeMetadata>();
+    }
+
+    #[allow(dead_code)]
+    async fn test_search(client: &RustyPipe, query: &str, limit: u8) -> Result<Vec<YouTubeTrack>, BotError> {
+        let res = client.query().search::<rustypipe::model::VideoItem, _>(query).await
+            .map_err(|e| BotError::Playback(format!("YouTube search failed: {e}")))?;
+        let tracks: Vec<YouTubeTrack> = res.items.items
+            .into_iter()
+            .take(limit as usize)
+            .map(video_item_to_track)
+            .collect();
+        Ok(tracks)
+    }
+
+    #[test]
+    fn test_sanitize_query_strips_emojis_and_symbols() {
+        let input = "QUERIAN ENFRIAR A KEIKO EN EL DESFILE ☠️ | PARADA MILITAR";
+        let cleaned = sanitize_query(input);
+        assert_eq!(cleaned, "QUERIAN ENFRIAR A KEIKO EN EL DESFILE PARADA MILITAR");
+    }
+
+    #[test]
+    fn test_has_non_catalogue_keywords() {
+        assert!(has_non_catalogue_keywords("tiny desk concert"));
+        assert!(has_non_catalogue_keywords("circo sarita"));
+        assert!(!has_non_catalogue_keywords("bad bunny la cancion"));
+    }
+
+    #[test]
+    fn test_score_track_duration_and_penalties() {
+        let track = YouTubeTrack {
+            id: "test".to_string(),
+            name: "Bad Bunny - La Cancion (Karaoke Version)".to_string(),
+            artists: vec!["Cover Artist".to_string()],
+            album: "Single".to_string(),
+            duration_ms: 180_000,
+        };
+        let score = score_track("bad bunny", &track);
+        // Has token matches but gets penalized for "karaoke" and "cover"
+        assert!(score < 0);
     }
 }

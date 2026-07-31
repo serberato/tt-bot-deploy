@@ -93,6 +93,34 @@ fn brake_resets_on_immediate_success() {
     assert!(brake.on_failure());
 }
 
+#[test]
+fn brake_progressive_backoff_and_consec() {
+    use std::time::Duration;
+    let mut brake = StartFailureBrake::new(5);
+    assert_eq!(brake.consec(), 0);
+    assert_eq!(brake.backoff_duration(), Duration::from_millis(500)); // 500 * 2^0 = 500ms
+
+    assert!(!brake.on_failure());
+    assert_eq!(brake.consec(), 1);
+    assert_eq!(brake.backoff_duration(), Duration::from_millis(1000)); // 500 * 2^1 = 1000ms
+
+    assert!(!brake.on_failure());
+    assert_eq!(brake.consec(), 2);
+    assert_eq!(brake.backoff_duration(), Duration::from_millis(2000)); // 500 * 2^2 = 2000ms
+
+    assert!(!brake.on_failure());
+    assert_eq!(brake.consec(), 3);
+    assert_eq!(brake.backoff_duration(), Duration::from_millis(4000)); // 500 * 2^3 = 4000ms
+
+    assert!(!brake.on_failure());
+    assert_eq!(brake.consec(), 4);
+    assert_eq!(brake.backoff_duration(), Duration::from_millis(8000)); // 500 * 2^4 = 8000ms
+
+    brake.on_success();
+    assert_eq!(brake.consec(), 0);
+    assert_eq!(brake.backoff_duration(), Duration::from_millis(500));
+}
+
 // -- channel_move_needs_flush --
 
 #[test]

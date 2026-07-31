@@ -17,7 +17,7 @@ paused = Pausado
 nothing_to_play = Nada que reproducir. Usa: p <búsqueda>
 restarting_track = Reiniciando la pista
 loading_liked = Cargando tus canciones favoritas...
-nothing_playing = Nada en reproducción
+nothing_playing = No hay nada en reproducción
 current_track = {track} [{index}/{total}] ({position}/{duration})\n{modes}
 search_cancelled = Búsqueda cancelada
 
@@ -26,9 +26,11 @@ search_cancelled = Búsqueda cancelada
 volume_set = Volumen: {percent}%
 volume_show = Volumen: {percent}% (máx: {max})
 volume_range = El volumen debe ser 0-{max}. Recibido: {got}
+current_volume = Volumen actual: {volume}%
 seek_forward = Avanzando {seconds}s
 seek_backward = Retrocediendo {seconds}s
 seek_usage = Uso: sf [segundos] / sb [segundos]
+seek_exceeds_timeline = El valor ingresado supera la línea de tiempo
 
 # Cola
 
@@ -37,6 +39,7 @@ index_starts_at_one = La posición empieza en 1
 no_track_at_position = No hay pista en la posición {position}
 removed = Eliminado: {name}
 queue_rm_usage = Uso: queue rm <número>
+no_more_items_in_queue = No hay más elementos en la cola
 
 # Modos
 
@@ -92,8 +95,9 @@ radio_fetching = Radio: buscando recomendaciones...
 radio_playing = Radio: {track}
 radio_no_recs = Radio: no se encontraron recomendaciones
 radio_failed = La radio falló: {error}
-end_of_queue = Fin de la cola
+end_of_queue = Estás en el fin de la cola
 invalid_pick = Selección inválida o sin resultados de búsqueda
 channel_not_found = Canal no encontrado: {path}
 failed_to_start = Error al iniciar la pista: {track}
-start_of_queue = Principio de la cola
+rate_limit_cooldown = El cortacircuitos de {service} se activó tras varios fallos seguidos. Esperando enfriamiento.
+start_of_queue = Estás en el inicio de la cola

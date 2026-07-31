@@ -26,9 +26,11 @@ search_cancelled = Поиск отменён
 volume_set = Громкость: {percent}%
 volume_show = Громкость: {percent}% (макс: {max})
 volume_range = Громкость должна быть 0-{max}. Получено: {got}
+current_volume = Текущая громкость: {volume}%
 seek_forward = Перемотка вперёд на {seconds} с
 seek_backward = Перемотка назад на {seconds} с
 seek_usage = Использование: sf [секунды] / sb [секунды]
+seek_exceeds_timeline = Введенное значение превышает шкалу времени
 
 # Очередь
 
@@ -37,6 +39,7 @@ index_starts_at_one = Нумерация начинается с 1
 no_track_at_position = Нет трека на позиции {position}
 removed = Удалено: {name}
 queue_rm_usage = Использование: queue rm <номер>
+no_more_items_in_queue = В очереди больше нет треков
 
 # Режимы
 
@@ -96,3 +99,4 @@ end_of_queue = Конец очереди
 invalid_pick = Неверный выбор или нет результатов поиска
 channel_not_found = Канал не найден: {path}
 failed_to_start = Не удалось запустить трек: {track}
+rate_limit_cooldown = Предохранитель {service} сработал после серии ошибок. Ожидание восстановления.

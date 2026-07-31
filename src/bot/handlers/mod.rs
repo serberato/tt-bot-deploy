@@ -28,6 +28,12 @@ pub async fn handle_command(cmd: BotCommand, ctx: &mut HandlerContext) {
         BotCommand::Replay { user_id } => playback::handle_replay(ctx, user_id),
         BotCommand::PreloadNext => playback::handle_preload_next(ctx),
         BotCommand::TrackEnded { generation, error } => playback::handle_track_ended(ctx, generation, error),
+        BotCommand::StartSettledTrack { service, uri, user_id, name } => {
+            playback::handle_start_settled_track(ctx, service, uri, user_id, name);
+        }
+        BotCommand::CircuitBreakerTrip { service } => {
+            playback::handle_circuit_breaker_trip(ctx, service);
+        }
 
         // Queue domain
         BotCommand::SearchAndPlay { query, user_id, user_name } => {

@@ -25,19 +25,43 @@ impl CommandDispatcher {
                 Some(true)
             }
             "n" | "next" => {
-                self.send(BotCommand::Next {
-                    user_id: sender_id,
-                    after_track: None,
-                });
+                let (is_idle, q_len) = {
+                    let s = self.state.lock();
+                    (s.is_idle_or_no_track(), s.queue.len())
+                };
+                if is_idle {
+                    self.reply_t(client, sender_id, Key::NothingPlaying, &[]);
+                } else if q_len == 1 {
+                    self.reply_t(client, sender_id, Key::NoMoreItemsInQueue, &[]);
+                } else {
+                    self.send(BotCommand::Next {
+                        user_id: sender_id,
+                        after_track: None,
+                    });
+                }
                 Some(true)
             }
             "b" | "prev" => {
-                self.send(BotCommand::Prev { user_id: sender_id });
+                let (is_idle, q_len) = {
+                    let s = self.state.lock();
+                    (s.is_idle_or_no_track(), s.queue.len())
+                };
+                if is_idle {
+                    self.reply_t(client, sender_id, Key::NothingPlaying, &[]);
+                } else if q_len == 1 {
+                    self.reply_t(client, sender_id, Key::NoMoreItemsInQueue, &[]);
+                } else {
+                    self.send(BotCommand::Prev { user_id: sender_id });
+                }
                 Some(true)
             }
             "replay" | "rp" => {
-                self.send(BotCommand::Replay { user_id: sender_id });
-                self.reply_t(client, sender_id, Key::RestartingTrack, &[]);
+                if self.state.lock().is_idle_or_no_track() {
+                    self.reply_t(client, sender_id, Key::NothingPlaying, &[]);
+                } else {
+                    self.send(BotCommand::Replay { user_id: sender_id });
+                    self.reply_t(client, sender_id, Key::RestartingTrack, &[]);
+                }
                 Some(true)
             }
             "liked" | "fav" => {
@@ -81,11 +105,8 @@ impl CommandDispatcher {
                 self.reply_t(
                     client,
                     sender_id,
-                    Key::VolumeShow,
-                    &[
-                        ("percent", vol.to_string()),
-                        ("max", self.max_volume.to_string()),
-                    ],
+                    Key::CurrentVolume,
+                    &[("volume", vol.to_string())],
                 );
             }
         }
@@ -94,6 +115,20 @@ impl CommandDispatcher {
     pub(crate) fn handle_seek_command(&self, client: &Client, sender_id: i32, seek: SeekParse) {
         match seek {
             SeekParse::Seconds(secs) => {
+                let (is_idle, status, current_pos_ms, duration_ms) = {
+                    let s = self.state.lock();
+                    let dur = s.current().map(|e| e.track.duration_ms()).unwrap_or(0);
+                    (s.is_idle_or_no_track(), s.status, s.position_ms, dur)
+                };
+                if is_idle || (status != PlaybackStatus::Playing && status != PlaybackStatus::Paused) {
+                    self.reply_t(client, sender_id, Key::NothingPlaying, &[]);
+                    return;
+                }
+                let target_ms = current_pos_ms as i64 + (secs as i64 * 1000);
+                if target_ms < 0 || target_ms > duration_ms as i64 {
+                    self.reply_t(client, sender_id, Key::SeekExceedsTimeline, &[]);
+                    return;
+                }
                 self.send(BotCommand::Seek {
                     offset_ms: secs * 1000,
                     user_id: sender_id,
@@ -125,7 +160,14 @@ impl CommandDispatcher {
             });
             self.reply_t(client, sender_id, Key::Searching, &[]);
         } else {
-            let status = self.state.lock().status;
+            let (is_idle, status) = {
+                let s = self.state.lock();
+                (s.is_idle_or_no_track(), s.status)
+            };
+            if is_idle {
+                self.reply_t(client, sender_id, Key::NothingPlaying, &[]);
+                return;
+            }
             match status {
                 PlaybackStatus::Loading | PlaybackStatus::Playing => {
                     self.send(BotCommand::Pause { user_id: sender_id });
@@ -136,7 +178,7 @@ impl CommandDispatcher {
                     self.reply_t(client, sender_id, Key::Resuming, &[]);
                 }
                 PlaybackStatus::Idle => {
-                    self.reply_t(client, sender_id, Key::NothingToPlay, &[]);
+                    self.reply_t(client, sender_id, Key::NothingPlaying, &[]);
                 }
             }
         }

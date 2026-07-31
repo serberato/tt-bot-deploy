@@ -93,14 +93,17 @@ impl PlayerState {
         if let Some(idx) = self.current_index {
             if idx > 0 {
                 self.current_index = Some(idx - 1);
+                self.current()
             } else if self.repeat_queue {
                 self.current_index = Some(self.queue.len() - 1);
+                self.current()
+            } else {
+                None
             }
         } else {
             self.current_index = Some(self.queue.len() - 1);
+            self.current()
         }
-
-        self.current()
     }
 
     pub fn clear(&mut self) {

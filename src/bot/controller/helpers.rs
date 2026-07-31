@@ -64,6 +64,17 @@ impl StartFailureBrake {
             false
         }
     }
+
+    /// Current consecutive failure count.
+    pub fn consec(&self) -> u32 {
+        self.consec
+    }
+
+    /// Progressive exponential backoff duration: `500ms * 2^consec` (capped around 8s).
+    pub fn backoff_duration(&self) -> std::time::Duration {
+        let ms = 500_u64.saturating_mul(1_u64 << self.consec.min(4));
+        std::time::Duration::from_millis(ms)
+    }
 }
 
 /// Settles when the audio pipeline has reported "nothing left to play" twice

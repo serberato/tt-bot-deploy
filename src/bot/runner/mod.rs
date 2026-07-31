@@ -16,6 +16,7 @@ pub mod lifecycle;
 pub mod player_loop;
 pub mod spotify_recovery;
 pub mod setup;
+pub mod watchdog;
 
 use context::ChannelTracker;
 use lifecycle::{

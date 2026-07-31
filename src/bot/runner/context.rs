@@ -39,6 +39,8 @@ pub(crate) struct CmdContext {
     pub shutdown: Arc<AtomicBool>,
     pub event_tx: Option<crossbeam_channel::Sender<RunnerEvent>>,
     pub i18n: Arc<crate::i18n::I18n>,
+    pub spotify_brake: Arc<parking_lot::Mutex<crate::bot::controller::StartFailureBrake>>,
+    pub youtube_brake: Arc<parking_lot::Mutex<crate::bot::controller::StartFailureBrake>>,
 }
 
 /// Shared atomic flags for audio pipeline and synchronization.

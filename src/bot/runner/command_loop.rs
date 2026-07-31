@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::bot::announcer::Announcer;
 use crate::bot::commands::BotCommand;
-use crate::bot::controller::{Controller, StartFailureBrake};
+use crate::bot::controller::Controller;
 use crate::bot::handlers::{handle_command, ClientCtx, SpotifyCtx, ChannelCtx, LifecycleCtx, HandlerContext};
 use crate::bot::runner::context::CmdContext;
 
@@ -38,6 +38,8 @@ pub(crate) async fn command_processor(
         shutdown,
         event_tx,
         i18n,
+        spotify_brake,
+        youtube_brake,
     } = ctx;
 
     let controller = Controller::new(
@@ -50,10 +52,11 @@ pub(crate) async fn command_processor(
         timing_reset,
         pipeline_drained,
         config_store.clone(),
+        spotify_brake,
+        youtube_brake,
     );
 
     let announcer = Announcer::new(client, i18n, bot_gender, event_tx);
-    let start_brake = StartFailureBrake::new(3);
 
     let mut handler_ctx = HandlerContext {
         client: ClientCtx {
@@ -68,7 +71,6 @@ pub(crate) async fn command_processor(
             connected: spotify_connected,
             recovery_notify,
             recovery_suspended,
-            start_brake,
         },
         channel: ChannelCtx {
             search_limit,
@@ -76,6 +78,7 @@ pub(crate) async fn command_processor(
             radio_delay,
             radio_cmd_tx,
             radio_prefetch_slot: Arc::new(parking_lot::Mutex::new(None)),
+            debounce_slot: Arc::new(parking_lot::Mutex::new(None)),
         },
         lifecycle: LifecycleCtx {
             config_store,

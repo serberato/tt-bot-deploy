@@ -83,9 +83,21 @@ impl KillOnDropChild {
 
 impl Drop for KillOnDropChild {
     fn drop(&mut self) {
-        if let Some(ref mut child) = self.0 {
+        if let Some(mut child) = self.0.take() {
             let _ = child.kill();
-            let _ = child.wait();
+            let start = std::time::Instant::now();
+            loop {
+                match child.try_wait() {
+                    Ok(Some(_)) => break,
+                    _ => {
+                        if start.elapsed() >= Duration::from_millis(500) {
+                            let _ = child.kill();
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(25));
+                    }
+                }
+            }
         }
     }
 }
@@ -128,23 +140,53 @@ fn download_blocking(
     ctrl: Arc<TrackControl>,
 ) -> tokio::task::JoinHandle<Result<Vec<u8>, String>> {
     tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let (tx, rx) = crossbeam_channel::bounded::<Result<Vec<u8>, String>>(16);
+        let ctrl_reader = ctrl.clone();
+
+        let reader_thread = std::thread::spawn(move || {
+            let mut chunk = [0u8; 64 * 1024];
+            loop {
+                if ctrl_reader.stopped.load(Ordering::Relaxed) {
+                    break;
+                }
+                match stdout.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if tx.send(Ok(chunk[..n].to_vec())).is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(format!("read yt-dlp output: {e}")));
+                        break;
+                    }
+                }
+            }
+        });
+
         let mut buf = Vec::new();
-        let mut chunk = [0u8; 64 * 1024];
         loop {
             if ctrl.stopped.load(Ordering::Relaxed) {
                 return Ok(Vec::new());
             }
-            match stdout.read(&mut chunk) {
-                Ok(0) => break,
-                Ok(n) => {
-                    if buf.len() + n > MAX_TRACK_BYTES {
+            match rx.recv_timeout(Duration::from_secs(10)) {
+                Ok(Ok(chunk_bytes)) => {
+                    if buf.len() + chunk_bytes.len() > MAX_TRACK_BYTES {
                         return Err("track exceeds maximum buffer size".to_string());
                     }
-                    buf.extend_from_slice(&chunk[..n]);
+                    buf.extend_from_slice(&chunk_bytes);
                 }
-                Err(e) => return Err(format!("read yt-dlp output: {e}")),
+                Ok(Err(e)) => return Err(e),
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                    ctrl.stopped.store(true, Ordering::Relaxed);
+                    return Err("yt-dlp stream read timed out after 10 seconds (stall detected)".to_string());
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                    break;
+                }
             }
         }
+        let _ = reader_thread.join();
         Ok(buf)
     })
 }

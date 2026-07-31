@@ -7,6 +7,7 @@ use crate::bot::commands::BotCommand;
 use crate::bot::controller::spawn_drained_advance;
 use crate::bot::state::{PlaybackStatus, SharedState};
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn player_event_loop(
     mut events: librespot_playback::player::PlayerEventChannel,
     state: SharedState,
@@ -15,6 +16,7 @@ pub(crate) async fn player_event_loop(
     recovery_notify: Arc<tokio::sync::Notify>,
     pipeline_drained: Arc<AtomicBool>,
     pause_flag: Arc<AtomicBool>,
+    spotify_brake: Arc<parking_lot::Mutex<crate::bot::controller::StartFailureBrake>>,
 ) {
     while let Some(event) = events.recv().await {
         match event {
@@ -22,6 +24,7 @@ pub(crate) async fn player_event_loop(
                 let mut s = state.lock();
                 s.status = PlaybackStatus::Playing;
                 s.position_ms = position_ms;
+                spotify_brake.lock().on_success();
             }
             PlayerEvent::Paused { position_ms, .. } => {
                 let mut s = state.lock();
@@ -55,10 +58,26 @@ pub(crate) async fn player_event_loop(
             }
             PlayerEvent::Unavailable { track_id, .. } => {
                 tracing::warn!("Track unavailable: {track_id:?}, skipping");
-                let _ = cmd_tx.send(BotCommand::Next {
-                    user_id: 0,
-                    after_track: track_id.to_uri().ok(),
-                });
+                let mut guard = spotify_brake.lock();
+                if guard.on_failure() {
+                    drop(guard);
+                    tracing::warn!("Spotify circuit breaker tripped after 3 consecutive failures; stopping playback");
+                    let _ = cmd_tx.send(BotCommand::CircuitBreakerTrip {
+                        service: crate::services::Service::Spotify,
+                    });
+                } else {
+                    let delay = guard.backoff_duration();
+                    drop(guard);
+                    let tx = cmd_tx.clone();
+                    let after_uri = track_id.to_uri().ok();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(delay).await;
+                        let _ = tx.send(BotCommand::Next {
+                            user_id: 0,
+                            after_track: after_uri,
+                        });
+                    });
+                }
             }
             PlayerEvent::TimeToPreloadNextTrack { .. } => {
                 let _ = cmd_tx.send(BotCommand::PreloadNext);

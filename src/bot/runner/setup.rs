@@ -177,6 +177,7 @@ pub(crate) fn spawn_supervisors(
     let recovery_notify = Arc::new(tokio::sync::Notify::new());
     let recovery_suspended = Arc::new(AtomicBool::new(false));
     let recovery_guard = Arc::new(crate::spotify::recovery::RecoveryGuard::new());
+    let spotify_brake = Arc::new(parking_lot::Mutex::new(crate::bot::controller::StartFailureBrake::new(3)));
 
     let recovery = SpotifyRecovery {
         session_holder: bundle.session_holder.clone(),
@@ -193,10 +194,21 @@ pub(crate) fn spawn_supervisors(
         local_shutdown: flags.local_shutdown.clone(),
         event_tx: event_tx.clone(),
         pipeline_drained: flags.pipeline_drained.clone(),
+        spotify_brake: spotify_brake.clone(),
     };
+    let recovery_arc = Arc::new(recovery);
     tokio::spawn(spotify_supervisor(
-        recovery,
+        (*recovery_arc).clone(),
         recovery_suspended.clone(),
+    ));
+
+    tokio::spawn(crate::bot::runner::watchdog::watchdog_loop(
+        state.clone(),
+        flags.pipeline_drained.clone(),
+        bundle.youtube_player.clone(),
+        recovery_arc,
+        cmd_tx.clone(),
+        shutdown.clone(),
     ));
 
     let config_store = Arc::new(crate::config::ConfigStore::new(
@@ -236,6 +248,8 @@ pub(crate) fn spawn_supervisors(
         shutdown,
         event_tx: event_tx.clone(),
         i18n: i18n.clone(),
+        spotify_brake: spotify_brake.clone(),
+        youtube_brake: Arc::new(parking_lot::Mutex::new(crate::bot::controller::StartFailureBrake::new(3))),
     };
     let processor_handle = tokio::spawn(async move {
         command_processor(cmd_rx, cmd_ctx).await;
@@ -249,6 +263,7 @@ pub(crate) fn spawn_supervisors(
         recovery_notify.clone(),
         flags.pipeline_drained.clone(),
         flags.pause_flag.clone(),
+        spotify_brake.clone(),
     ));
 
     (

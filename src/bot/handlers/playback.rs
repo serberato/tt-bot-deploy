@@ -11,7 +11,6 @@ use crate::bot::commands::{BotCommand, PlaybackMode};
 use crate::bot::controller::{auto_advance_is_stale, spawn_drained_advance};
 use crate::bot::handlers::HandlerContext;
 use crate::bot::runner::RunnerEvent;
-use crate::bot::state::PlaybackStatus;
 use crate::i18n::Key;
 use crate::services::Service;
 
@@ -93,11 +92,7 @@ fn finish_next_playback(
     resumed: bool,
 ) {
     if !resumed {
-        let was_playing = {
-            let s = ctx.controller.state.lock();
-            s.status == PlaybackStatus::Playing || s.status == PlaybackStatus::Paused
-        };
-        if user_id > 0 && was_playing {
+        if user_id > 0 {
             ctx.controller.state.lock().current_index = prev_index;
         } else {
             ctx.controller.stop_playback();
@@ -111,6 +106,21 @@ fn finish_next_playback(
 }
 
 pub async fn handle_next(ctx: &mut HandlerContext, user_id: i32, after_track: Option<String>) {
+    if user_id > 0 {
+        let (is_idle, q_len) = {
+            let s = ctx.controller.state.lock();
+            (s.is_idle_or_no_track(), s.queue.len())
+        };
+        if is_idle {
+            ctx.reply_t(user_id, Key::NothingPlaying, &[]);
+            return;
+        }
+        if q_len == 1 {
+            ctx.reply_t(user_id, Key::NoMoreItemsInQueue, &[]);
+            return;
+        }
+    }
+
     {
         let current = ctx.controller.state.lock().current().map(|e| e.track.uri().to_string());
         if auto_advance_is_stale(after_track.as_deref(), current.as_deref()) {
@@ -139,25 +149,9 @@ pub async fn handle_next(ctx: &mut HandlerContext, user_id: i32, after_track: Op
     };
 
     if let Some((service, uri_str, name)) = next {
-        if ctx.start_or_skip(service, &uri_str, user_id, &name) {
-            ctx.reply_t(user_id, Key::NowPlaying, &[("track", name.clone())]);
-            ctx.announce_playing(&name);
-
-            let (radio_on, at_end, allow_rec) = {
-                let s = ctx.controller.state.lock();
-                let at_end = s.current_index.map(|i| i + 3 >= s.queue.len()).unwrap_or(true);
-                let allow = s.current().map(|e| e.allow_recommend).unwrap_or(false);
-                (s.radio_enabled, at_end, allow)
-            };
-            if radio_on && at_end && allow_rec {
-                crate::bot::handlers::radio::schedule_radio_prefetch(
-                    &ctx.channel.radio_cmd_tx,
-                    uri_str,
-                    ctx.channel.radio_delay,
-                    &ctx.channel.radio_prefetch_slot,
-                );
-            }
-        }
+        ctx.reply_t(user_id, Key::NowPlaying, &[("track", name.clone())]);
+        ctx.announce_playing(&name);
+        ctx.schedule_start_track(service, uri_str, user_id, name);
     } else {
         let radio_on = ctx.controller.state.lock().radio_enabled;
         let mut resumed = false;
@@ -171,15 +165,29 @@ pub async fn handle_next(ctx: &mut HandlerContext, user_id: i32, after_track: Op
 }
 
 pub fn handle_prev(ctx: &mut HandlerContext, user_id: i32) {
+    if user_id > 0 {
+        let (is_idle, q_len) = {
+            let s = ctx.controller.state.lock();
+            (s.is_idle_or_no_track(), s.queue.len())
+        };
+        if is_idle {
+            ctx.reply_t(user_id, Key::NothingPlaying, &[]);
+            return;
+        }
+        if q_len == 1 {
+            ctx.reply_t(user_id, Key::NoMoreItemsInQueue, &[]);
+            return;
+        }
+    }
+
     let prev = {
         let mut s = ctx.controller.state.lock();
         s.go_prev().map(|e| (e.track.service(), e.track.uri().to_string(), e.track.display_name()))
     };
     if let Some((service, uri_str, name)) = prev {
-        if ctx.start_or_skip(service, &uri_str, user_id, &name) {
-            ctx.reply_t(user_id, Key::NowPlaying, &[("track", name.clone())]);
-            ctx.announce_playing(&name);
-        }
+        ctx.reply_t(user_id, Key::NowPlaying, &[("track", name.clone())]);
+        ctx.announce_playing(&name);
+        ctx.schedule_start_track(service, uri_str, user_id, name);
     } else if user_id > 0 {
         ctx.reply_t(user_id, Key::StartOfQueue, &[]);
     }
@@ -268,26 +276,83 @@ pub fn handle_track_ended(ctx: &mut HandlerContext, generation: u64, error: Opti
     }
     if let Some(ref e) = error {
         tracing::warn!("YouTube track ended with error: {e}");
-        if ctx.spotify.start_brake.on_failure() {
+        let mut guard = ctx.controller.youtube_brake.lock();
+        if guard.on_failure() {
+            drop(guard);
             tracing::warn!("Consecutive YouTube track failures, stopping playback");
-            ctx.brake_stop();
+            handle_circuit_breaker_trip(ctx, Service::YouTube);
+            return;
+        } else {
+            let delay = guard.backoff_duration();
+            drop(guard);
+            let tx = ctx.channel.radio_cmd_tx.clone();
+            let ended_uri = ctx.controller.state.lock().current().map(|e| e.track.uri().to_string());
+            tokio::spawn(async move {
+                tokio::time::sleep(delay).await;
+                let _ = tx.send(BotCommand::Next {
+                    user_id: 0,
+                    after_track: ended_uri,
+                });
+            });
             return;
         }
     } else {
-        ctx.spotify.start_brake.on_success();
+        ctx.controller.youtube_brake.lock().on_success();
     }
     let ended_uri = ctx.controller.state.lock().current().map(|e| e.track.uri().to_string());
-    if error.is_some() {
-        let _ = ctx.channel.radio_cmd_tx.send(BotCommand::Next {
-            user_id: 0,
-            after_track: ended_uri,
-        });
+    spawn_drained_advance(
+        ctx.channel.radio_cmd_tx.clone(),
+        ctx.controller.pipeline_drained.clone(),
+        ctx.controller.pause_flag.clone(),
+        ended_uri,
+    );
+}
+
+pub fn handle_start_settled_track(
+    ctx: &mut HandlerContext,
+    service: Service,
+    uri_str: String,
+    user_id: i32,
+    name: String,
+) {
+    let current_uri = ctx
+        .controller
+        .state
+        .lock()
+        .current()
+        .map(|e| e.track.uri().to_string());
+    if let Some(cur) = current_uri {
+        if cur != uri_str {
+            tracing::debug!("Dropping debounced start for {uri_str} as current track is now {cur}");
+            return;
+        }
     } else {
-        spawn_drained_advance(
-            ctx.channel.radio_cmd_tx.clone(),
-            ctx.controller.pipeline_drained.clone(),
-            ctx.controller.pause_flag.clone(),
-            ended_uri,
-        );
+        tracing::debug!("Dropping debounced start for {uri_str} as queue is empty");
+        return;
     }
+
+    if ctx.start_or_skip(service, &uri_str, user_id, &name) {
+        let (radio_on, at_end, allow_rec) = {
+            let s = ctx.controller.state.lock();
+            let at_end = s.current_index.map(|i| i + 3 >= s.queue.len()).unwrap_or(true);
+            let allow = s.current().map(|e| e.allow_recommend).unwrap_or(false);
+            (s.radio_enabled, at_end, allow)
+        };
+        if radio_on && at_end && allow_rec {
+            crate::bot::handlers::radio::schedule_radio_prefetch(
+                &ctx.channel.radio_cmd_tx,
+                uri_str,
+                ctx.channel.radio_delay,
+                &ctx.channel.radio_prefetch_slot,
+            );
+        }
+    }
+}
+
+pub fn handle_circuit_breaker_trip(ctx: &mut HandlerContext, service: Service) {
+    tracing::warn!("Circuit breaker tripped for {service:?}; stopping playback to prevent rate-limit cascade");
+    ctx.brake_stop();
+    let cooldown_msg = format!("Idle - {service:?} Rate Limit Cooldown");
+    ctx.client.announcer.send_event(crate::bot::runner::RunnerEvent::Error(cooldown_msg.clone()));
+    ctx.client.announcer.set_status(&cooldown_msg);
 }
